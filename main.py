@@ -123,7 +123,63 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "running", "db": "ok"}
+@app.get("/auth/login")
+async def auth_login():
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    import json
+    
+    client_config = {
+        "web": {
+            "client_id": os.environ.get('GOOGLE_CLIENT_ID'),
+            "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET'),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"]
+        }
+    }
+    
+    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+    flow.redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent' 
+    )
+    return {"authorization_url": authorization_url}
 
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    
+    code = request.query_params.get('code')
+    if not code:
+        return {"error": "No code provided"}
+
+    client_config = {
+        "web": {
+            "client_id": os.environ.get('GOOGLE_CLIENT_ID'),
+            "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET'),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"]
+        }
+    }
+    
+    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+    flow.redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    
+    try:
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        refresh_token = creds.refresh_token
+        
+        return {
+            "message": "Success! Copy this Refresh Token and add it to Render as GOOGLE_REFRESH_TOKEN",
+            "refresh_token": refresh_token
+        }
+    except Exception as e:
+        return {"error": str(e)}
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
