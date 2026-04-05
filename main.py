@@ -49,12 +49,58 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return JSONResponse({"status": "error"}, status_code=500)
-
 @app.post("/webhook/alice")
 async def alice_webhook(request: Request):
+    data = await request.json()
+    
+    # Получаем, что сказал пользователь
+    user_command = data.get('request', {}).get('original_utterance', '').lower()
+    
+    response_text = "Я пока не поняла. Попробуй 'Добавь задачу [текст]' или 'Покажи список'."
+    end_session = False
+
+    try:
+        # 1. КОМАНДА "ДОБАВЬ ЗАДАЧУ"
+        if user_command.startswith("добавь"):
+            # Убираем слово "добавь" и пробелы
+            task_title = user_command.replace("добавь", "").strip()
+            
+            # Если есть слово "задачу", тоже убираем его для красоты
+            task_title = task_title.replace("задачу", "").strip()
+            
+            if task_title:
+                await task_service.create_task(task_title)
+                response_text = f"Задача '{task_title}' добавлена!"
+            else:
+                response_text = "Какую задачу добавить?"
+
+        # 2. КОМАНДА "ПОКАЖИ СПИСОК" (или "обнови список")
+        elif "список" in user_command or "задачи" in user_command or "обнови" in user_command:
+            tasks = await task_service.get_all_tasks()
+            
+            if not tasks:
+                response_text = "Список дел пуст."
+            else:
+                # Собираем список текстом
+                task_list = []
+                for t in tasks[:5]: # Показываем только последние 5, чтобы Алиса не тараторила
+                    status = "выполнено" if t.is_done else "в процессе"
+                    task_list.append(f"{t.id}. {t.title}")
+                
+                response_text = "Вот твои текущие дела:\n" + "\n".join(task_list)
+                
+    except Exception as e:
+        response_text = "Произошла ошибка при подключении к базе данных."
+
+    # Формируем ответ для Алисы (JSON)
     return JSONResponse({
-        "version": "1.0", "session": {}, 
-        "response": {"text": "Синхронизация с Алисой в разработке 🛠️", "end_session": False}
+        "version": "1.0",
+        "session": data.get("session", {}),
+        "response": {
+            "text": response_text,
+            "tts": response_text,  # Текст для озвучки
+            "end_session": end_session
+        }
     })
 
 @app.get("/")
