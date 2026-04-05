@@ -49,60 +49,73 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return JSONResponse({"status": "error"}, status_code=500)
+        
 @app.post("/webhook/alice")
 async def alice_webhook(request: Request):
+    # Parse incoming JSON data from Yandex Dialogs
     data = await request.json()
     
-    # Получаем, что сказал пользователь
-    user_command = data.get('request', {}).get('original_utterance', '').lower()
+    # Extract user input
+    user_command = data.get('request', {}).get('command', '')
+    original_text = data.get('request', {}).get('original_utterance', '').lower()
     
-    response_text = "Я пока не поняла. Попробуй 'Добавь задачу [текст]' или 'Покажи список'."
+    # Fallback to original utterance if command field is empty
+    if not user_command:
+        user_command = original_text
+
+    # Default response if no conditions match
+    response_text = "Я вас не поняла. Попробуйте: 'Добавь задачу ...' или 'Покажи список'."
     end_session = False
 
     try:
-        # 1. КОМАНДА "ДОБАВЬ ЗАДАЧУ"
-        if user_command.startswith("добавь"):
-            # Убираем слово "добавь" и пробелы
-            task_title = user_command.replace("добавь", "").strip()
-            
-            # Если есть слово "задачу", тоже убираем его для красоты
-            task_title = task_title.replace("задачу", "").strip()
+        # 1. Handle Greeting or Start command
+        if not user_command or "старт" in user_command or "привет" in user_command:
+            response_text = "Привет! Я ваш планировщик. Скажите 'Добавь задачу', чтобы записать дело, или 'Покажи список', чтобы увидеть дела."
+
+        # 2. Handle Add Task command
+        elif "добавь" in user_command:
+            # Remove keywords to isolate the actual task description
+            task_title = user_command.replace("добавь", "").replace("задачу", "").replace("задание", "").strip()
             
             if task_title:
                 await task_service.create_task(task_title)
-                response_text = f"Задача '{task_title}' добавлена!"
+                response_text = f"Поняла, записала: '{task_title}'."
             else:
-                response_text = "Какую задачу добавить?"
+                response_text = "Что именно добавить?"
 
-        # 2. КОМАНДА "ПОКАЖИ СПИСОК" (или "обнови список")
-        elif "список" in user_command or "задачи" in user_command or "обнови" in user_command:
+        # 3. Handle Show List command
+        elif "список" in user_command or "задачи" in user_command or "дела" in user_command or "обнови" in user_command:
             tasks = await task_service.get_all_tasks()
             
             if not tasks:
-                response_text = "Список дел пуст."
+                response_text = "Список пуст."
             else:
-                # Собираем список текстом
                 task_list = []
-                for t in tasks[:5]: # Показываем только последние 5, чтобы Алиса не тараторила
-                    status = "выполнено" if t.is_done else "в процессе"
+                # Limit to 5 items to keep the voice response short
+                for t in tasks[:5]: 
                     task_list.append(f"{t.id}. {t.title}")
                 
-                response_text = "Вот твои текущие дела:\n" + "\n".join(task_list)
+                response_text = "Вот список:\n" + "\n".join(task_list)
                 
-    except Exception as e:
-        response_text = "Произошла ошибка при подключении к базе данных."
+        # 4. Handle Delete command (currently unsupported via voice)
+        elif "удали" in user_command or "сотри" in user_command:
+             response_text = "Пока я умею только добавлять и показывать. Удалите задачу через Телеграм-бота."
 
-    # Формируем ответ для Алисы (JSON)
+    except Exception as e:
+        # Catch any database or runtime errors
+        response_text = "Ой, что-то сломалось на сервере. Попробуйте позже."
+
+    # Return structured JSON response expected by Yandex Dialogs
     return JSONResponse({
         "version": "1.0",
         "session": data.get("session", {}),
         "response": {
             "text": response_text,
-            "tts": response_text,  # Текст для озвучки
+            "tts": response_text,
             "end_session": end_session
         }
     })
-
+    
 @app.get("/")
 async def root():
     return {"status": "Todo Bot is running", "version": "0.1.0"}
