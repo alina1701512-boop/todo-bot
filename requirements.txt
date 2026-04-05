@@ -7,3 +7,6 @@ dateparser==1.2.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 pydantic==2.8.0
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
