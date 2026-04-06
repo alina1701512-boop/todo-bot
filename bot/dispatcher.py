@@ -75,3 +75,42 @@ async def process_callback(callback: types.CallbackQuery):
         await callback.answer("🗑 Удалено")
 
     await cmd_list(callback.message)
+    # Handle any text message as a task (without /add command)
+@dp.message(lambda message: message.text and not message.text.startswith('/'))
+async def handle_text_as_task(message: types.Message):
+    text = message.text.strip()
+    
+    # Parse date/time from text
+    parsed = dateparser.parse(text, settings={
+        "TIMEZONE": TZ, 
+        "RETURN_AS_TIMEZONE_AWARE": True, 
+        "PREFER_DATES_FROM": "future",
+        "PREFER_DAY_OF_MONTH": 'first',
+        'DATE_ORDER': 'DMY'
+    })
+    
+    # Check if date is valid
+    if parsed and (parsed - datetime.now(tz)) > timedelta(hours=1):
+        due_at = parsed
+        logger.info(f"Parsed date: {due_at}")
+    else:
+        due_at = None
+        logger.warning(f"Could not parse date from: {text}")
+    
+    # Create task
+    task = await task_service.create_task(text, due_at)
+    
+    # Add to Google Calendar
+    try:
+        from calendar_service import create_google_event
+        event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
+        if event_link:
+            logger.info(f"Google Calendar event created: {event_link}")
+    except Exception as e:
+        logger.error(f"Failed to create calendar event: {e}")
+    
+    # Send response
+    if due_at:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n {task.format_due()}")
+    else:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n️ Не удалось распознать дату, задача без срока")
