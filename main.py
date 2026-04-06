@@ -34,6 +34,9 @@ async def startup():
         logger.info(f"🤖 Telegram webhook set: {webhook_url}")
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
+
+    from main import add_reminder_jobs
+    add_reminder_jobs(scheduler)
     
     scheduler.add_job(check_reminders, "interval", minutes=5, replace_existing=True)
     scheduler.start()
