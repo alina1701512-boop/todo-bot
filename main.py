@@ -91,6 +91,37 @@ async def startup():
     
     try:
         await init_db()
+        @app.on_event("startup")
+async def startup():
+    logger.info("🚀 Starting application...")
+    logger.info(f"📍 APP_HOST: {APP_HOST}")
+    
+    try:
+        await init_db()
+        logger.info("✅ Database initialized")
+        
+        # === ДОБАВЬТЕ ЭТИ 2 СТРОКИ ===
+        from database import add_missing_columns
+        await add_missing_columns()
+        # =================================
+        
+    except Exception as e:
+        logger.error(f"❌ Database error: {e}")
+        raise
+    
+    try:
+        webhook_url = f"{APP_HOST}/webhook/telegram"
+        await bot.set_webhook(webhook_url, allowed_updates=dp.resolve_used_update_types())
+        logger.info(f"🤖 Telegram webhook set: {webhook_url}")
+    except Exception as e:
+        logger.error(f"❌ Telegram webhook error: {e}")
+
+    # Добавляем джобы напоминаний (закомментировано)
+    # add_reminder_jobs(scheduler)
+    
+    scheduler.add_job(check_reminders, "interval", minutes=5, replace_existing=True)
+    scheduler.start()
+    logger.info("⏰ Scheduler started")
         logger.info("✅ Database initialized")
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
