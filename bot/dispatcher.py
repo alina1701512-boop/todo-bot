@@ -66,11 +66,7 @@ async def cmd_start(message: types.Message):
     text += "- Позвонить врачу зеленый каждый день\n"
     text += "- Отчёт важно каждую неделю в 10:00"
     
-    await message.answer(
-        text, 
-        reply_markup=get_main_menu_keyboard(), 
-        parse_mode="HTML"
-    )
+    await message.answer(text, reply_markup=get_main_menu_keyboard(), parse_mode="HTML")
 
 @dp.message(lambda message: message.text == "⚙️ Меню")
 async def show_extended_menu(message: types.Message):
