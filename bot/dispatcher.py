@@ -40,7 +40,7 @@ def parse_priority(text: str) -> str:
         return "red"
     if any(w in text_lower for w in ["зеленый", "легко", "лайт", "обычн", "спокойн"]):
         return "green"
-    return "yellow"
+    return "none"  # ✅ По умолчанию без приоритета
 
 def parse_repeat(text: str) -> str:
     text_lower = text.lower()
@@ -112,7 +112,7 @@ async def handle_task_input(message: types.Message):
     due_at = parse_date(text)
     task = await task_service.create_task(clean, due_at, priority, repeat)
     
-    emoji = "🔴" if priority=="red" else ("🟡" if priority=="yellow" else "🟢")
+    emoji = "🔴" if priority=="red" else ("🟡" if priority=="yellow" else ("🟢" if priority=="green" else "⚪️"))
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}", reply_markup=get_main_menu_keyboard())
 
@@ -135,8 +135,18 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
     
     for t in tasks[:15]:
         is_selected = t.id in selected_tasks[user_id]
-        icon = "🏁" if t.is_done else ("🔴" if t.priority=="red" else ("🟢" if t.priority=="green" else "🟡"))
-        sel = "✅" if is_selected else "⬜️"
+        
+        # ✅ Приоритет: показываем иконку только если есть приоритет
+        if t.priority == "red":
+            icon = "🔴"
+        elif t.priority == "yellow":
+            icon = "🟡"
+        elif t.priority == "green":
+            icon = "🟢"
+        else:
+            icon = ""  # Без приоритета - нет иконки
+        
+        sel = "✅" if is_selected else ""  # ✅ Убрали белый квадрат
         short = (t.title[:25]+"...") if len(t.title)>25 else t.title
         
         # Форматируем дату для отображения
@@ -145,8 +155,12 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
         else:
             due_display = "Без срока"
         
-        # Кнопка с задачей
-        btn_text = f"{sel} {icon} {short}\n🕐 {due_display}"
+        # ✅ Жирный шрифт для выбранных задач
+        if is_selected:
+            btn_text = f"✅ <b>{short}</b>\n🕐 {due_display}"
+        else:
+            btn_text = f"{icon} {short}\n🕐 {due_display}"
+        
         callback_data = f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}"
         kb.append([InlineKeyboardButton(text=btn_text, callback_data=callback_data)])
 
@@ -171,13 +185,16 @@ async def process_toggle(callback: types.CallbackQuery):
     if user_id not in selected_tasks: 
         selected_tasks[user_id] = set()
     
+    task = await task_service.get_task_by_id(task_id)
+    task_name = task.title[:30] if task else "Задача"
+    
     # Переключаем выделение задачи
     if task_id in selected_tasks[user_id]:
         selected_tasks[user_id].remove(task_id)
-        await callback.answer("❌ Снято с выбора", show_alert=False)
+        await callback.answer(f"⬜️ {task_name}", show_alert=False, cache_time=0)
     else:
         selected_tasks[user_id].add(task_id)
-        await callback.answer("✅ Выбрано", show_alert=False)
+        await callback.answer(f"✅ {task_name}", show_alert=False, cache_time=0)
     
     # Обновляем список
     await callback.message.delete()
