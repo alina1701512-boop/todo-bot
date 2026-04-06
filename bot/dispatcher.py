@@ -18,7 +18,19 @@ dp = Dispatcher()
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Привет! Я твой список дел.\n\n📝 Команды:\n/add <задача> [дата/время]\n/list - показать задачи\n/help - помощь")
+    await message.answer(
+        "👋 Привет! Я твой умный список дел.\n\n"
+        "📝 **Команды:**\n"
+        "/add <задача> [дата/время] - добавить задачу\n"
+        "/list - все задачи\n"
+        "/today - задачи на сегодня\n"
+        "/tomorrow - задачи на завтра\n"
+        "/week - задачи на неделю\n"
+        "/done <id> - выполнить задачу\n"
+        "/delete <id> - удалить задачу\n"
+        "/help - помощь\n\n"
+        "💡 Или просто напиши текст с датой: 'Купить молоко завтра в 18:00'"
+    )
 
 @dp.message(Command("add"))
 async def cmd_add(message: types.Message):
@@ -27,37 +39,7 @@ async def cmd_add(message: types.Message):
         await message.answer("📝 Напиши задачу. Пример: `Купить молоко завтра в 18:00`")
         return
 
-    # Manual parsing for Russian dates
-    due_at = None
-    now = datetime.now(tz)
-    
-    # Check for "сегодня" (today)
-    if "сегодня" in text.lower():
-        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-            due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    
-    # Check for "завтра" (tomorrow)
-    elif "завтра" in text.lower():
-        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-            tomorrow = now + timedelta(days=1)
-            due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    
-    # Try dateparser as fallback
-    if not due_at:
-        parsed = dateparser.parse(text, settings={
-            "TIMEZONE": TZ, 
-            "RETURN_AS_TIMEZONE_AWARE": True, 
-            "PREFER_DATES_FROM": "future",
-        })
-        if parsed and (parsed - now) > timedelta(hours=1):
-            due_at = parsed
-
+    due_at = parse_date(text)
     task = await task_service.create_task(text, due_at)
 
     # Google Calendar Integration
@@ -65,7 +47,7 @@ async def cmd_add(message: types.Message):
         from calendar_service import create_google_event
         event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
         if event_link:
-            logger.info(f"Google Calendar event created successfully: {event_link}")
+            logger.info(f"Google Calendar event created: {event_link}")
     except Exception as e:
         logger.error(f"Failed to create calendar event: {e}")
 
@@ -77,43 +59,146 @@ async def cmd_add(message: types.Message):
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
     tasks = await task_service.get_all_tasks()
+    await show_tasks(message, tasks, "Все задачи")
+
+@dp.message(Command("today"))
+async def cmd_today(message: types.Message):
+    tasks = await task_service.get_tasks_for_date(datetime.now(tz).date())
+    await show_tasks(message, tasks, "Задачи на сегодня")
+
+@dp.message(Command("tomorrow"))
+async def cmd_tomorrow(message: types.Message):
+    tomorrow = datetime.now(tz).date() + timedelta(days=1)
+    tasks = await task_service.get_tasks_for_date(tomorrow)
+    await show_tasks(message, tasks, "Задачи на завтра")
+
+@dp.message(Command("week"))
+async def cmd_week(message: types.Message):
+    tasks = await task_service.get_all_tasks()
+    today = datetime.now(tz).date()
+    week_end = today + timedelta(days=7)
+    
+    week_tasks = []
+    for task in tasks:
+        if task.due_at and today <= task.due_at.date() <= week_end:
+            week_tasks.append(task)
+    
+    await show_tasks(message, week_tasks, "Задачи на неделю")
+
+async def show_tasks(message: types.Message, tasks, title):
     if not tasks:
-        await message.answer("📋 Список дел пуст. Добавь первую задачу командой /add")
+        await message.answer(f"📋 {title}: список пуст")
         return
 
-    text = "📋 **Мои задачи:**\n\n"
-    for t in tasks:
+    text = f"📋 **{title}:**\n\n"
+    for t in tasks[:10]:  # Show max 10 tasks
         status = "✅" if t.is_done else "⬜️"
-        text += f"{status} `{t.id}`. {t.title}\n   {t.format_due()}\n"
+        text += f"{status} `{t.id}`. {t.title}\n"
+        if t.due_at:
+            text += f"   🕐 {t.format_due()}\n"
+        text += "\n"
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"✔️ {t.id}", callback_data=f"done_{t.id}"),
-         InlineKeyboardButton(text=f"🗑 {t.id}", callback_data=f"del_{t.id}")]
-        for t in tasks[:5]
-    ])
+    # Create keyboard with actions
+    keyboard_buttons = []
+    for t in tasks[:5]:  # First 5 tasks
+        if not t.is_done:
+            keyboard_buttons.append([
+                InlineKeyboardButton(text=f"✔️ {t.id}", callback_data=f"done_{t.id}"),
+                InlineKeyboardButton(text=f"🗑 {t.id}", callback_data=f"del_{t.id}"),
+                InlineKeyboardButton(text=f"⏰ {t.id}", callback_data=f"postpone_{t.id}")
+            ])
 
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons) if keyboard_buttons else None
     await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
-@dp.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_"))
+@dp.message(Command("done"))
+async def cmd_done(message: types.Message):
+    try:
+        task_id = int(message.text.replace("/done", "").strip())
+        await task_service.update_task(task_id, is_done=True)
+        await message.answer(f"✅ Задача #{task_id} выполнена!")
+    except (ValueError, IndexError):
+        await message.answer("❌ Укажите ID задачи. Пример: `/done 5`")
+
+@dp.message(Command("delete"))
+async def cmd_delete(message: types.Message):
+    try:
+        task_id = int(message.text.replace("/delete", "").strip())
+        await task_service.delete_task(task_id)
+        await message.answer(f"🗑 Задача #{task_id} удалена!")
+    except (ValueError, IndexError):
+        await message.answer("❌ Укажите ID задачи. Пример: `/delete 5`")
+
+@dp.message(Command("postpone"))
+async def cmd_postpone(message: types.Message):
+    args = message.text.replace("/postpone", "").strip().split()
+    if len(args) < 2:
+        await message.answer("❌ Пример: `/postpone 5 завтра 15:00` или `/postpone 5 сегодня 18:00`")
+        return
+    
+    try:
+        task_id = int(args[0])
+        date_text = " ".join(args[1:])
+        due_at = parse_date(date_text)
+        
+        if not due_at:
+            await message.answer("❌ Не удалось распознать дату. Пример: `/postpone 5 завтра 15:00`")
+            return
+        
+        await task_service.update_task(task_id, due_at=due_at)
+        await message.answer(f"⏰ Задача #{task_id} перенесена на {due_at.strftime('%d.%m в %H:%M')}")
+    except (ValueError, IndexError) as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_") or c.data.startswith("postpone_"))
 async def process_callback(callback: types.CallbackQuery):
     action, task_id = callback.data.split("_")
     task_id = int(task_id)
 
     if action == "done":
         await task_service.update_task(task_id, is_done=True)
-        await callback.answer("✅ Отмечено")
+        await callback.answer("✅ Отмечено как выполненное")
     elif action == "del":
         await task_service.delete_task(task_id)
         await callback.answer("🗑 Удалено")
+    elif action == "postpone":
+        # Simple postpone: move to tomorrow same time
+        task = await task_service.get_task_by_id(task_id)
+        if task and task.due_at:
+            new_time = task.due_at + timedelta(days=1)
+            await task_service.update_task(task_id, due_at=new_time)
+            await callback.answer(f"⏰ Перенесено на {new_time.strftime('%d.%m в %H:%M')}")
+        else:
+            await callback.answer("⏰ Перенесено на завтра")
 
-    await cmd_list(callback.message)
+    # Refresh the list
+    tasks = await task_service.get_all_tasks()
+    await show_tasks(callback.message, tasks, "Все задачи")
 
 # Handle any text message as a task (without /add command)
 @dp.message(lambda message: message.text and not message.text.startswith('/'))
 async def handle_text_as_task(message: types.Message):
     text = message.text.strip()
+    due_at = parse_date(text)
     
-    # Manual parsing for Russian dates
+    task = await task_service.create_task(text, due_at)
+    
+    # Google Calendar Integration
+    try:
+        from calendar_service import create_google_event
+        event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
+        if event_link:
+            logger.info(f"Google Calendar event created: {event_link}")
+    except Exception as e:
+        logger.error(f"Failed to create calendar event: {e}")
+    
+    if due_at:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due()}")
+    else:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату, задача без срока")
+
+def parse_date(text):
+    """Parse date from text with Russian support"""
     due_at = None
     now = datetime.now(tz)
     
@@ -124,7 +209,6 @@ async def handle_text_as_task(message: types.Message):
             hour = int(time_match.group(1))
             minute = int(time_match.group(2))
             due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            logger.info(f"Parsed 'сегодня': {due_at}")
     
     # Check for "завтра" (tomorrow)
     elif "завтра" in text.lower():
@@ -134,7 +218,6 @@ async def handle_text_as_task(message: types.Message):
             minute = int(time_match.group(2))
             tomorrow = now + timedelta(days=1)
             due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            logger.info(f"Parsed 'завтра': {due_at}")
     
     # Try dateparser as fallback
     if not due_at:
@@ -145,22 +228,5 @@ async def handle_text_as_task(message: types.Message):
         })
         if parsed and (parsed - now) > timedelta(hours=1):
             due_at = parsed
-            logger.info(f"Parsed by dateparser: {due_at}")
     
-    # Create task
-    task = await task_service.create_task(text, due_at)
-    
-    # Add to Google Calendar
-    try:
-        from calendar_service import create_google_event
-        event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
-        if event_link:
-            logger.info(f"Google Calendar event created: {event_link}")
-    except Exception as e:
-        logger.error(f"Failed to create calendar event: {e}")
-    
-    # Send response
-    if due_at:
-        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due()}")
-    else:
-        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату, задача без срока")
+    return due_at
