@@ -90,10 +90,12 @@ async def show_tasks(message: types.Message, tasks, title):
         await message.answer(f"📋 {title}: список пуст")
         return
 
-    text = f"📋 **{title}:**\n\n"
+    text = f"📋 <b>{title}:</b>\n\n"
     for t in tasks[:10]:  # Show max 10 tasks
         status = "✅" if t.is_done else "⬜️"
-        text += f"{status} `{t.id}`. {t.title}\n"
+        # Escape HTML special chars in title
+        safe_title = t.title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        text += f"{status} <code>{t.id}</code>. {safe_title}\n"
         if t.due_at:
             text += f"   🕐 {t.format_due()}\n"
         text += "\n"
@@ -109,7 +111,7 @@ async def show_tasks(message: types.Message, tasks, title):
             ])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons) if keyboard_buttons else None
-    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 @dp.message(Command("done"))
 async def cmd_done(message: types.Message):
