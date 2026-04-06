@@ -75,27 +75,47 @@ async def process_callback(callback: types.CallbackQuery):
         await callback.answer("🗑 Удалено")
 
     await cmd_list(callback.message)
-    # Handle any text message as a task (without /add command)
+  # Handle any text message as a task (without /add command)
 @dp.message(lambda message: message.text and not message.text.startswith('/'))
 async def handle_text_as_task(message: types.Message):
     text = message.text.strip()
     
-    # Parse date/time from text
-    parsed = dateparser.parse(text, settings={
-        "TIMEZONE": TZ, 
-        "RETURN_AS_TIMEZONE_AWARE": True, 
-        "PREFER_DATES_FROM": "future",
-        "PREFER_DAY_OF_MONTH": 'first',
-        'DATE_ORDER': 'DMY'
-    })
+    # Manual parsing for Russian dates
+    due_at = None
+    now = datetime.now(tz)
     
-    # Check if date is valid
-    if parsed and (parsed - datetime.now(tz)) > timedelta(hours=1):
-        due_at = parsed
-        logger.info(f"Parsed date: {due_at}")
-    else:
-        due_at = None
-        logger.warning(f"Could not parse date from: {text}")
+    # Check for "сегодня" (today)
+    if "сегодня" in text.lower():
+        # Extract time like "14:00" or "18:00"
+        import re
+        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            logger.info(f"Parsed 'сегодня': {due_at}")
+    
+    # Check for "завтра" (tomorrow)
+    elif "завтра" in text.lower():
+        import re
+        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            tomorrow = now + timedelta(days=1)
+            due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            logger.info(f"Parsed 'завтра': {due_at}")
+    
+    # Try dateparser as fallback
+    if not due_at:
+        parsed = dateparser.parse(text, settings={
+            "TIMEZONE": TZ, 
+            "RETURN_AS_TIMEZONE_AWARE": True, 
+            "PREFER_DATES_FROM": "future",
+        })
+        if parsed and (parsed - now) > timedelta(hours=1):
+            due_at = parsed
+            logger.info(f"Parsed by dateparser: {due_at}")
     
     # Create task
     task = await task_service.create_task(text, due_at)
@@ -113,4 +133,4 @@ async def handle_text_as_task(message: types.Message):
     if due_at:
         await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n {task.format_due()}")
     else:
-        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n️ Не удалось распознать дату, задача без срока")
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату, задача без срока")
