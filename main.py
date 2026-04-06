@@ -127,64 +127,70 @@ async def health():
     return {"status": "running", "db": "ok"}
 @app.get("/auth/login")
 async def auth_login():
-    from google_auth_oauthlib.flow import Flow
+    import secrets
+    from urllib.parse import urlencode
     
-    client_config = {
-        "web": {
-            "client_id": os.environ.get('GOOGLE_CLIENT_ID'),
-            "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET'),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"]
-        }
+    # Generate PKCE parameters
+    code_verifier = secrets.token_urlsafe(128)
+    # Store in session or as query param (we'll use a simple approach)
+    
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    
+    # Build authorization URL manually
+    params = {
+        'client_id': client_id,
+        'redirect_uri': redirect_uri,
+        'response_type': 'code',
+        'scope': ' '.join(SCOPES),
+        'access_type': 'offline',
+        'prompt': 'consent',
+        'include_granted_scopes': 'true'
     }
     
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=SCOPES,
-        redirect_uri=f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
-    )
+    auth_url = f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
     
-    authorization_url, state = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent'
-    )
-    
-    return {"authorization_url": authorization_url}
+    return {"authorization_url": auth_url}
 
 @app.get("/auth/callback")
 async def auth_callback(request: Request):
-    from google_auth_oauthlib.flow import Flow
+    import httpx
+    from urllib.parse import urlencode
     
     code = request.query_params.get('code')
     if not code:
         return {"error": "No code provided"}
 
-    client_config = {
-        "web": {
-            "client_id": os.environ.get('GOOGLE_CLIENT_ID'),
-            "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET'),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"]
-        }
+    client_id = os.environ.get('GOOGLE_CLIENT_ID')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
+    redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    
+    # Exchange code for token
+    token_data = {
+        'code': code,
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'redirect_uri': redirect_uri,
+        'grant_type': 'authorization_code'
     }
     
-    flow = Flow.from_client_config(
-        client_config,
-        scopes=SCOPES,
-        redirect_uri=f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
-    )
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            'https://oauth2.googleapis.com/token',
+            data=urlencode(token_data),
+            headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        )
     
-    try:
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        refresh_token = creds.refresh_token
-        
-        return {
-            "message": "Success! Copy this Refresh Token and add it to Render as GOOGLE_REFRESH_TOKEN",
-            "refresh_token": refresh_token
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    if response.status_code != 200:
+        return {"error": response.json()}
+    
+    tokens = response.json()
+    refresh_token = tokens.get('refresh_token')
+    
+    if not refresh_token:
+        return {"error": "No refresh token received"}
+    
+    return {
+        "message": "Success! Copy this Refresh Token and add it to Render as GOOGLE_REFRESH_TOKEN",
+        "refresh_token": refresh_token
+    }
