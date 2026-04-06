@@ -1,5 +1,7 @@
 import os
 import logging
+# Google Calendar Scopes
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram.types import Update
