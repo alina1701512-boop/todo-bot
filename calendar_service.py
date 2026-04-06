@@ -13,7 +13,7 @@ def get_calendar_service():
     client_id = os.environ.get('GOOGLE_CLIENT_ID')
     client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
     
-    if refresh_token:
+    if refresh_token and client_id and client_secret:
         creds = Credentials(
             token=None,
             refresh_token=refresh_token,
@@ -23,11 +23,16 @@ def get_calendar_service():
             scopes=SCOPES
         )
         
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            raise Exception("No valid credentials found. Please authorize first.")
+        # Try to refresh the token
+        try:
+            if creds.expired or not creds.valid:
+                creds.refresh(Request())
+                logger.info("Google credentials refreshed successfully")
+        except Exception as e:
+            logger.error(f"Failed to refresh Google credentials: {e}")
+            raise Exception(f"Invalid credentials: {e}")
+    else:
+        raise Exception("Missing Google credentials in environment variables")
             
     return build('calendar', 'v3', credentials=creds)
 
