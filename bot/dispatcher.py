@@ -3,13 +3,13 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import dateparser
 import re
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
-import logging
 
-# Initialize logger for debugging
+# Initialize logger
 logger = logging.getLogger(__name__)
 
 tz = ZoneInfo(TZ)
@@ -21,13 +21,13 @@ async def cmd_start(message: types.Message):
     await message.answer(
         "👋 Привет! Я твой умный список дел.\n\n"
         "<b>📝 Команды:</b>\n"
-        "/add &lt;задача&gt; [дата/время] - добавить задачу\n"
+        "/add <задача> [дата/время] - добавить задачу\n"
         "/list - все задачи\n"
         "/today - задачи на сегодня\n"
         "/tomorrow - задачи на завтра\n"
         "/week - задачи на неделю\n"
-        "/done &lt;id&gt; - выполнить задачу\n"
-        "/delete &lt;id&gt; - удалить задачу\n"
+        "/done <id> - выполнить задачу\n"
+        "/delete <id> - удалить задачу\n"
         "/help - помощь\n\n"
         "💡 Или просто напиши текст с датой: 'Купить молоко завтра в 18:00'",
         parse_mode="HTML"
@@ -79,11 +79,7 @@ async def cmd_week(message: types.Message):
     today = datetime.now(tz).date()
     week_end = today + timedelta(days=7)
     
-    week_tasks = []
-    for task in tasks:
-        if task.due_at and today <= task.due_at.date() <= week_end:
-            week_tasks.append(task)
-    
+    week_tasks = [t for t in tasks if t.due_at and today <= t.due_at.date() <= week_end]
     await show_tasks(message, week_tasks, "Задачи на неделю")
 
 async def show_tasks(message: types.Message, tasks, title):
@@ -92,18 +88,16 @@ async def show_tasks(message: types.Message, tasks, title):
         return
 
     text = f"📋 <b>{title}:</b>\n\n"
-    for t in tasks[:10]:  # Show max 10 tasks
+    for t in tasks[:10]:
         status = "✅" if t.is_done else "⬜️"
-        # Escape HTML special chars in title
         safe_title = t.title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         text += f"{status} <code>{t.id}</code>. {safe_title}\n"
         if t.due_at:
             text += f"   🕐 {t.format_due()}\n"
         text += "\n"
 
-    # Create keyboard with actions
     keyboard_buttons = []
-    for t in tasks[:5]:  # First 5 tasks
+    for t in tasks[:5]:
         if not t.is_done:
             keyboard_buttons.append([
                 InlineKeyboardButton(text=f"✔️ {t.id}", callback_data=f"done_{t.id}"),
@@ -136,7 +130,7 @@ async def cmd_delete(message: types.Message):
 async def cmd_postpone(message: types.Message):
     args = message.text.replace("/postpone", "").strip().split()
     if len(args) < 2:
-        await message.answer("❌ Пример: `/postpone 5 завтра 15:00` или `/postpone 5 сегодня 18:00`")
+        await message.answer("❌ Пример: `/postpone 5 завтра 15:00`")
         return
     
     try:
@@ -145,12 +139,12 @@ async def cmd_postpone(message: types.Message):
         due_at = parse_date(date_text)
         
         if not due_at:
-            await message.answer("❌ Не удалось распознать дату. Пример: `/postpone 5 завтра 15:00`")
+            await message.answer("❌ Не удалось распознать дату")
             return
         
         await task_service.update_task(task_id, due_at=due_at)
-        await message.answer(f"⏰ Задача #{task_id} перенесена на {due_at.strftime('%d.%m в %H:%M')}")
-    except (ValueError, IndexError) as e:
+        await message.answer(f"⏰ Задача #{task_id} перенесена")
+    except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
 @dp.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_") or c.data.startswith("postpone_"))
@@ -160,25 +154,22 @@ async def process_callback(callback: types.CallbackQuery):
 
     if action == "done":
         await task_service.update_task(task_id, is_done=True)
-        await callback.answer("✅ Отмечено как выполненное")
+        await callback.answer("✅ Отмечено")
     elif action == "del":
         await task_service.delete_task(task_id)
         await callback.answer("🗑 Удалено")
     elif action == "postpone":
-        # Simple postpone: move to tomorrow same time
         task = await task_service.get_task_by_id(task_id)
         if task and task.due_at:
             new_time = task.due_at + timedelta(days=1)
             await task_service.update_task(task_id, due_at=new_time)
-            await callback.answer(f"⏰ Перенесено на {new_time.strftime('%d.%m в %H:%M')}")
+            await callback.answer(f"⏰ Перенесено")
         else:
             await callback.answer("⏰ Перенесено на завтра")
 
-    # Refresh the list
     tasks = await task_service.get_all_tasks()
     await show_tasks(callback.message, tasks, "Все задачи")
 
-# Handle any text message as a task (without /add command)
 @dp.message(lambda message: message.text and not message.text.startswith('/'))
 async def handle_text_as_task(message: types.Message):
     text = message.text.strip()
@@ -186,7 +177,6 @@ async def handle_text_as_task(message: types.Message):
     
     task = await task_service.create_task(text, due_at)
     
-    # Google Calendar Integration
     try:
         from calendar_service import create_google_event
         event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
@@ -198,14 +188,13 @@ async def handle_text_as_task(message: types.Message):
     if due_at:
         await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due()}")
     else:
-        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату, задача без срока")
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату")
 
 def parse_date(text):
     """Parse date from text with Russian support"""
     due_at = None
     now = datetime.now(tz)
     
-    # Check for "сегодня" (today)
     if "сегодня" in text.lower():
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
@@ -213,7 +202,6 @@ def parse_date(text):
             minute = int(time_match.group(2))
             due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     
-    # Check for "завтра" (tomorrow)
     elif "завтра" in text.lower():
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
@@ -222,7 +210,6 @@ def parse_date(text):
             tomorrow = now + timedelta(days=1)
             due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
     
-    # Try dateparser as fallback
     if not due_at:
         parsed = dateparser.parse(text, settings={
             "TIMEZONE": TZ, 
