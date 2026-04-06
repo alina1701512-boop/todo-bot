@@ -1,6 +1,6 @@
 from sqlalchemy import select, func
 from database import async_session
-from models import Task, RepeatRule
+from models import Task  # ✅ Убрали RepeatRule - используем строки
 from datetime import datetime, date, timedelta
 
 async def create_task(title: str, due_at: datetime | None = None, 
@@ -50,7 +50,8 @@ async def get_tasks_for_week(start_date: date, priority: str = None) -> list[Tas
 async def update_task(task_id: int, **kwargs) -> Task | None:
     async with async_session() as session:
         task = await session.get(Task, task_id)
-        if not task: return None
+        if not task: 
+            return None
         for k, v in kwargs.items():
             setattr(task, k, v)
         await session.commit()
@@ -60,7 +61,8 @@ async def update_task(task_id: int, **kwargs) -> Task | None:
 async def delete_task(task_id: int) -> bool:
     async with async_session() as session:
         task = await session.get(Task, task_id)
-        if not task: return False
+        if not task: 
+            return False
         await session.delete(task)
         await session.commit()
         return True
