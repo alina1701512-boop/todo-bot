@@ -21,7 +21,7 @@ app = FastAPI()
 scheduler = AsyncIOScheduler()
 
 # =============================================================================
-# 📦 ФУНКЦИИ НАПОМИНАНИЙ
+# 📦 ФУНКЦИИ НАПОМИНАНИЙ (закомментированы временно)
 # =============================================================================
 
 async def send_daily_summary():
@@ -42,7 +42,6 @@ async def send_daily_summary():
             time_str = t.due_at.strftime("%H:%M") if t.due_at else ""
             text += f"{icon} {t.title} {time_str}\n"
         
-        # Получаем ID из переменной окружения
         user_id = os.environ.get('TELEGRAM_USER_ID')
         if user_id:
             await bot.send_message(chat_id=int(user_id), text=text, parse_mode="HTML")
@@ -61,7 +60,7 @@ async def check_15h_reminders():
         for t in tasks:
             if t.due_at and not t.is_done and not t.is_reminded:
                 diff = (t.due_at - now).total_seconds()
-                if 0 < diff <= 5400:  # 1.5 часа = 5400 секунд
+                if 0 < diff <= 5400:
                     user_id = os.environ.get('TELEGRAM_USER_ID')
                     if user_id:
                         await bot.send_message(
@@ -75,9 +74,8 @@ async def check_15h_reminders():
 
 def add_reminder_jobs(scheduler):
     """Добавляет джобы напоминаний"""
-   # Напоминания временно отключены (нет колонок в БД)
-# scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary", timezone=TZ)
-# scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
+    scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary", timezone=TZ)
+    scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
     logger.info("✅ Reminder jobs added")
 
 # =============================================================================
@@ -91,20 +89,7 @@ async def startup():
     
     try:
         await init_db()
-        @app.on_event("startup")
-async def startup():
-    logger.info("🚀 Starting application...")
-    logger.info(f"📍 APP_HOST: {APP_HOST}")
-    
-    try:
-        await init_db()
         logger.info("✅ Database initialized")
-        
-        # === ДОБАВЬТЕ ЭТИ 2 СТРОКИ ===
-        from database import add_missing_columns
-        await add_missing_columns()
-        # =================================
-        
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
@@ -116,26 +101,8 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # Добавляем джобы напоминаний (закомментировано)
+    # Напоминания временно отключены
     # add_reminder_jobs(scheduler)
-    
-    scheduler.add_job(check_reminders, "interval", minutes=5, replace_existing=True)
-    scheduler.start()
-    logger.info("⏰ Scheduler started")
-        logger.info("✅ Database initialized")
-    except Exception as e:
-        logger.error(f"❌ Database error: {e}")
-        raise
-    
-    try:
-        webhook_url = f"{APP_HOST}/webhook/telegram"
-        await bot.set_webhook(webhook_url, allowed_updates=dp.resolve_used_update_types())
-        logger.info(f"🤖 Telegram webhook set: {webhook_url}")
-    except Exception as e:
-        logger.error(f"❌ Telegram webhook error: {e}")
-
-    # Добавляем джобы напоминаний
-    add_reminder_jobs(scheduler)
     
     scheduler.add_job(check_reminders, "interval", minutes=5, replace_existing=True)
     scheduler.start()
