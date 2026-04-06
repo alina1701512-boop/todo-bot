@@ -136,35 +136,25 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
     for t in tasks[:15]:
         is_selected = t.id in selected_tasks[user_id]
         
-        # ✅ Приоритет: показываем иконку только если есть приоритет
-        if t.priority == "red":
-            icon = "🔴"
-        elif t.priority == "yellow":
-            icon = "🟡"
-        elif t.priority == "green":
-            icon = "🟢"
-        else:
-            icon = ""  # Без приоритета - нет иконки
+        # Иконка приоритета (показываем только если задача НЕ выбрана)
+        if t.priority == "red": icon = "🔴"
+        elif t.priority == "yellow": icon = "🟡"
+        elif t.priority == "green": icon = "🟢"
+        else: icon = "⚪️"
         
-        sel = "✅" if is_selected else ""  # ✅ Убрали белый квадрат
         short = (t.title[:25]+"...") if len(t.title)>25 else t.title
+        due_display = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         
-        # Форматируем дату для отображения
-        if t.due_at:
-            due_display = t.due_at.strftime("%d.%m %H:%M")
-        else:
-            due_display = "Без срока"
-        
-        # ✅ Жирный шрифт для выбранных задач
+        # ✅ ВЫДЕЛЕНИЕ ЗАКЛАДКОЙ
         if is_selected:
-            btn_text = f"✅ <b>{short}</b>\n🕐 {due_display}"
+            btn_text = f"🔖 {short}\n🕐 {due_display}"
         else:
             btn_text = f"{icon} {short}\n🕐 {due_display}"
         
         callback_data = f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}"
         kb.append([InlineKeyboardButton(text=btn_text, callback_data=callback_data)])
 
-    # Кнопки действий (только если есть выбранные задачи)
+    # Кнопки действий (появляются только когда есть выбранные задачи)
     if selected_tasks[user_id]:
         cnt = len(selected_tasks[user_id])
         kb.append([
