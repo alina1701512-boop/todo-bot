@@ -60,13 +60,16 @@ def clean_title(text: str) -> str:
 # --- КОМАНДЫ МЕНЮ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    text = "👋 Привет! Я твой умный планировщик.\n\n"
+    text += "<b>Примеры:</b>\n"
+    text += "- Купить молоко красный завтра 18:00\n"
+    text += "- Позвонить врачу зеленый каждый день\n"
+    text += "- Отчёт важно каждую неделю в 10:00"
+    
     await message.answer(
-        "👋 Привет! Я твой умный планировщик.\n\n"
-        "<b>Примеры:</b>\n"
-        "- Купить молоко <i>красный</i> завтра 18:00\n"
-        - Позвонить врачу <i>зеленый</i> каждый день\n"
-        "- Отчёт <i>важно</i> каждую неделю в 10:00",
-        reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
+        text, 
+        reply_markup=get_main_menu_keyboard(), 
+        parse_mode="HTML"
     )
 
 @dp.message(lambda message: message.text == "⚙️ Меню")
