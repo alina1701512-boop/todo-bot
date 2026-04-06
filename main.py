@@ -75,10 +75,9 @@ async def check_15h_reminders():
 
 def add_reminder_jobs(scheduler):
     """Добавляет джобы напоминаний"""
-    # Ежедневно в 9:00
-    scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary", timezone=TZ)
-    # Каждые 10 минут проверяем напоминания
-    scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
+   # Напоминания временно отключены (нет колонок в БД)
+# scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary", timezone=TZ)
+# scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
     logger.info("✅ Reminder jobs added")
 
 # =============================================================================
