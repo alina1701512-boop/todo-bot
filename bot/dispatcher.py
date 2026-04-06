@@ -6,6 +6,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
+import logging
+
+# Initialize logger for debugging
+logger = logging.getLogger(__name__)
 
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
@@ -26,6 +30,16 @@ async def cmd_add(message: types.Message):
     due_at = parsed if parsed and (parsed - datetime.now(tz)) > timedelta(hours=1) else None
 
     task = await task_service.create_task(text, due_at)
+
+    # Google Calendar Integration
+    try:
+        from calendar_service import create_google_event
+        event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
+        if event_link:
+            logger.info(f"Google Calendar event created successfully: {event_link}")
+    except Exception as e:
+        logger.error(f"Failed to create calendar event: {e}")
+
     await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n{task.format_due()}")
 
 @dp.message(Command("list"))
