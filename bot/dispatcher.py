@@ -9,360 +9,217 @@ from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
 
-# Initialize logger
 logger = logging.getLogger(__name__)
-
-# Хранилище для выбранных задач
 selected_tasks = {}
-
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
 # --- КЛАВИАТУРЫ ---
 def get_main_menu_keyboard():
-    """Главное меню бота"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="📅 Сегодня")],
-            [KeyboardButton(text="📅 Завтра"), KeyboardButton(text="➕ Добавить")],
-            [KeyboardButton(text="📆 Неделя"), KeyboardButton(text="⚙️ Меню")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    return keyboard
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="📅 Сегодня")],
+        [KeyboardButton(text="📅 Завтра"), KeyboardButton(text="➕ Добавить")],
+        [KeyboardButton(text=" Срочные"), KeyboardButton(text="🟡 Средние")],
+        [KeyboardButton(text="📆 Неделя"), KeyboardButton(text="⚙️ Меню")]
+    ], resize_keyboard=True)
 
-def get_extended_menu_keyboard():
-    """Расширенное меню"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="✅ Выполненные"), KeyboardButton(text="🗑 Удалить")],
-            [KeyboardButton(text="⏰ Перенести"), KeyboardButton(text="📋 Все задачи")],
-            [KeyboardButton(text="🔙 Назад")]
-        ],
-        resize_keyboard=True,
-        one_time_keyboard=False
-    )
-    return keyboard
+def get_priority_menu_keyboard():
+    return ReplyKeyboardMarkup(keyboard=[
+        [KeyboardButton(text=" Важные сегодня"), KeyboardButton(text="🟢 Важные завтра")],
+        [KeyboardButton(text="🔙 Назад")]
+    ], resize_keyboard=True)
 
 def get_cancel_keyboard():
-    """Кнопка отмены"""
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ Отмена")]],
-        resize_keyboard=True
-    )
-    return keyboard
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
+
+# --- ПАРСИНГ ПРИОРИТЕТОВ ---
+def parse_priority(text: str) -> str:
+    text_lower = text.lower()
+    if any(w in text_lower for w in ["красный", "срочно", "важно", "горит", "срочн", "критич"]):
+        return "red"
+    if any(w in text_lower for w in ["зеленый", "легко", "лайт", "обычн", "спокойн"]):
+        return "green"
+    return "yellow"
+
+def parse_repeat(text: str) -> str:
+    text_lower = text.lower()
+    if "каждый день" in text_lower or "ежедневно" in text_lower: return "daily"
+    if "каждую неделю" in text_lower or "еженедельно" in text_lower: return "weekly"
+    if "каждый месяц" in text_lower or "ежемесячно" in text_lower: return "monthly"
+    return "none"
+
+def clean_title(text: str) -> str:
+    # Убираем ключевые слова приоритета и повтора из названия задачи
+    words_to_remove = ["красный", "срочно", "важно", "горит", "зеленый", "легко", "лайт", 
+                       "каждый день", "каждую неделю", "каждый месяц", "ежедневно", "еженедельно"]
+    for w in words_to_remove:
+        text = text.lower().replace(w, "")
+    return text.strip().title()
 
 # --- КОМАНДЫ МЕНЮ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
-        "👋 Привет! Я твой умный список дел.\n\n"
-        "<b>Как пользоваться:</b>\n"
-        "• Используй кнопки внизу для навигации\n"
-        "• Просто напиши задачу с датой: <i>Купить молоко завтра в 18:00</i>\n"
-        "• Нажимай на задачи в списке, чтобы выделить их\n"
-        "• Выбирай действия: Выполнить, Удалить, Перенести",
-        reply_markup=get_main_menu_keyboard(),
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("menu"))
-async def cmd_menu(message: types.Message):
-    await message.answer(
-        "⚙️ <b>Дополнительное меню:</b>\n"
-        "Выбери действие:",
-        reply_markup=get_extended_menu_keyboard(),
-        parse_mode="HTML"
-    )
-
-@dp.message(lambda message: message.text == "🔙 Назад")
-async def menu_back(message: types.Message):
-    await message.answer(
-        "🔙 Возврат к главному меню",
-        reply_markup=get_main_menu_keyboard()
+        "👋 Привет! Я твой умный планировщик.\n\n"
+        "<b>Примеры:</b>\n"
+        "• Купить молоко <i>красный</i> завтра 18:00\n"
+        • Позвонить врачу <i>зеленый</i> каждый день\n"
+        "• Отчёт <i>важно</i> каждую неделю в 10:00",
+        reply_markup=get_main_menu_keyboard(), parse_mode="HTML"
     )
 
 @dp.message(lambda message: message.text == "⚙️ Меню")
 async def show_extended_menu(message: types.Message):
-    await message.answer(
-        "⚙️ <b>Дополнительные функции:</b>",
-        reply_markup=get_extended_menu_keyboard(),
-        parse_mode="HTML"
-    )
+    await message.answer("⚙️ Фильтры по важности:", reply_markup=get_priority_menu_keyboard())
 
-@dp.message(lambda message: message.text == "📋 Все задачи")
-async def show_all_tasks(message: types.Message):
-    await show_tasks_interactive(message)
+@dp.message(lambda message: message.text == "🔙 Назад")
+async def menu_back(message: types.Message):
+    await message.answer("🔙 Главное меню", reply_markup=get_main_menu_keyboard())
 
-@dp.message(lambda message: message.text == "📅 Сегодня")
-async def show_today_tasks(message: types.Message):
-    tasks = await task_service.get_tasks_for_date(datetime.now(tz).date())
-    await show_tasks_interactive(message, custom_tasks=tasks, title="Задачи на сегодня")
-
-@dp.message(lambda message: message.text == "📅 Завтра")
-async def show_tomorrow_tasks(message: types.Message):
-    tomorrow = datetime.now(tz).date() + timedelta(days=1)
-    tasks = await task_service.get_tasks_for_date(tomorrow)
-    await show_tasks_interactive(message, custom_tasks=tasks, title="Задачи на завтра")
-
-@dp.message(lambda message: message.text == "📆 Неделя")
-async def show_week_tasks(message: types.Message):
-    tasks = await task_service.get_all_tasks()
-    today = datetime.now(tz).date()
-    week_end = today + timedelta(days=7)
-    week_tasks = [t for t in tasks if t.due_at and today <= t.due_at.date() <= week_end]
-    await show_tasks_interactive(message, custom_tasks=week_tasks, title="Задачи на неделю")
-
-@dp.message(lambda message: message.text == "✅ Выполненные")
-async def show_completed_tasks(message: types.Message):
-    tasks = await task_service.get_all_tasks()
-    completed = [t for t in tasks if t.is_done]
-    await show_tasks_interactive(message, custom_tasks=completed, title="Выполненные задачи")
+@dp.message(lambda message: message.text in ["📋 Все задачи", "📅 Сегодня", "📅 Завтра", "📆 Неделя", 
+                                            "🔴 Срочные", "🟡 Средние", "🟢 Важные сегодня", "🟢 Важные завтра"])
+async def handle_menu_buttons(message: types.Message):
+    text = message.text
+    now = datetime.now(tz)
+    
+    if text == "📋 Все задачи": await show_tasks_interactive(message)
+    elif text == "📅 Сегодня": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date()), title="Сегодня")
+    elif text == "📅 Завтра": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date()+timedelta(days=1)), title="Завтра")
+    elif text == "📆 Неделя": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_week(now.date()), title="Неделя")
+    elif text == "🔴 Срочные": await show_tasks_interactive(message, custom_tasks=await task_service.get_all_tasks(), title="Срочные", priority_filter="red")
+    elif text == "🟡 Средние": await show_tasks_interactive(message, custom_tasks=await task_service.get_all_tasks(), title="Средние", priority_filter="yellow")
+    elif text == "🟢 Важные сегодня": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date(), "red"), title="Важные сегодня")
+    elif text == "🟢 Важные завтра": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date()+timedelta(days=1), "red"), title="Важные завтра")
 
 @dp.message(lambda message: message.text == "➕ Добавить")
 async def start_add_task(message: types.Message):
-    await message.answer(
-        "📝 <b>Напиши задачу:</b>\n"
-        "Примеры:\n"
-        "• Купить молоко\n"
-        "• Встреча завтра в 15:00\n"
-        "• Позвонить врачу сегодня в 18:00\n\n"
-        "Или нажми ❌ Отмена",
-        reply_markup=get_cancel_keyboard(),
-        parse_mode="HTML"
-    )
+    await message.answer("📝 Напиши задачу.\nПример: <i>Купить хлеб красный завтра 18:00</i>", reply_markup=get_cancel_keyboard(), parse_mode="HTML")
 
 @dp.message(lambda message: message.text == "❌ Отмена")
 async def cancel_action(message: types.Message):
-    await message.answer(
-        "❌ Отменено",
-        reply_markup=get_main_menu_keyboard()
-    )
+    await message.answer("❌ Отменено", reply_markup=get_main_menu_keyboard())
 
-@dp.message(Command("add"))
-async def cmd_add(message: types.Message):
-    await process_task_creation(message, message.text.replace("/add ", "").strip())
-
-# Обработчик текста для добавления задачи (когда нажата кнопка "Добавить")
-@dp.message(lambda message: message.text and message.text not in [
-    "📋 Все задачи", "📅 Сегодня", "📅 Завтра", "➕ Добавить", 
-    "📆 Неделя", "⚙️ Меню", "✅ Выполненные", "🗑 Удалить", 
-    "⏰ Перенести", "🔙 Назад", "❌ Отмена"
+# --- ОБРАБОТКА ТЕКСТА (ДОБАВЛЕНИЕ) ---
+@dp.message(lambda message: message.text and not message.text.startswith('/') and message.text not in [
+    "📋 Все задачи", "📅 Сегодня", "📅 Завтра", "➕ Добавить", "📆 Неделя", "⚙️ Меню", 
+    "🔴 Срочные", "🟡 Средние", "🟢 Важные сегодня", "🟢 Важные завтра", "🔙 Назад", "❌ Отмена"
 ])
 async def handle_task_input(message: types.Message):
     text = message.text.strip()
-    await process_task_creation(message, text)
-
-async def process_task_creation(message: types.Message, text: str):
-    if not text:
-        await message.answer("❌ Напиши текст задачи", reply_markup=get_main_menu_keyboard())
-        return
-
-    due_at, error = parse_date(text)
+    priority = parse_priority(text)
+    repeat = parse_repeat(text)
+    clean = clean_title(text)
     
-    # If there's a parsing error, show it and ask to retry
-    if error:
-        await message.answer(
-            f"{error}\n\n"
-            f"📝 <b>Пожалуйста, исправь время:</b>\n"
-            f"• Часы: 0-23 (например, 14:00, а не 29:00)\n"
-            f"• Минуты: 0-59 (например, 14:30, а не 14:99)\n\n"
-            f"Пример: <i>Купить молоко сегодня 18:00</i>",
-            reply_markup=get_cancel_keyboard(),
-            parse_mode="HTML"
-        )
-        return
-
-    task = await task_service.create_task(text, due_at)
-
+    due_at = parse_date(text)
+    task = await task_service.create_task(clean, due_at, priority, repeat)
+    
+    # Google Calendar
     try:
         from calendar_service import create_google_event
-        event_link = await create_google_event(text, due_at.isoformat() if due_at else None)
-        if event_link:
-            logger.info(f"Google Calendar event created: {event_link}")
-    except Exception as e:
-        logger.error(f"Failed to create calendar event: {e}")
+        await create_google_event(clean, due_at.isoformat() if due_at else None)
+    except: pass
 
-    if due_at:
-        await message.answer(
-            f"✅ Задача добавлена!\n"
-            f"📝 {task.title}\n"
-            f"🕐 {task.format_due()}",
-            reply_markup=get_main_menu_keyboard()
-        )
-    else:
-        await message.answer(
-            f"✅ Задача добавлена!\n"
-            f"📝 {task.title}\n"
-            f"⚠️ Не удалось распознать дату, задача без срока",
-            reply_markup=get_main_menu_keyboard()
-        )
+    emoji = "🔴" if priority=="red" else ("🟡" if priority=="yellow" else "🟢")
+    await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due() if due_at else 'Без срока'}", reply_markup=get_main_menu_keyboard())
 
-# --- ИНТЕРАКТИВНЫЙ СПИСОК ЗАДАЧ ---
-async def show_tasks_interactive(message, custom_tasks=None, title="Все задачи"):
+# --- ИНТЕРАКТИВНЫЙ СПИСОК ---
+async def show_tasks_interactive(message, custom_tasks=None, title="Задачи", priority_filter=None):
     user_id = message.from_user.id
+    if user_id not in selected_tasks: selected_tasks[user_id] = set()
     
-    if custom_tasks is not None:
-        tasks = custom_tasks
-    else:
-        tasks = await task_service.get_all_tasks()
-    
-    if user_id not in selected_tasks:
-        selected_tasks[user_id] = set()
+    tasks = custom_tasks if custom_tasks is not None else await task_service.get_all_tasks()
+    if priority_filter:
+        tasks = [t for t in tasks if t.priority == priority_filter and not t.is_done]
 
     if not tasks:
-        await message.answer(
-            f"📋 {title}: список пуст",
-            reply_markup=get_main_menu_keyboard()
-        )
+        await message.answer(f"📋 {title}: пусто", reply_markup=get_main_menu_keyboard())
         return
 
     text = f"📋 <b>{title}:</b>\n\n"
-    keyboard_buttons = []
-    
+    kb = []
     for t in tasks[:15]:
-        is_selected = t.id in selected_tasks[user_id]
-        status_icon = "✅" if is_selected else "⬜️"
-        
-        if t.is_done:
-            status_icon = "🏁"
-        
-        short_title = (t.title[:30] + "...") if len(t.title) > 30 else t.title
-        btn_text = f"{status_icon} {short_title}"
-        
-        if t.is_done:
-            keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"noop_{t.id}")])
-        else:
-            keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"toggle_{t.id}")])
+        icon = "🏁" if t.is_done else ("🔴" if t.priority=="red" else ("🟢" if t.priority=="green" else "🟡"))
+        sel = "✅" if t.id in selected_tasks[user_id] else "⬜️"
+        short = (t.title[:25]+"...") if len(t.title)>25 else t.title
+        kb.append([InlineKeyboardButton(text=f"{sel} {icon} {short}", callback_data=f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}")])
 
     if selected_tasks[user_id]:
-        count = len(selected_tasks[user_id])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text=f"✔️ Выполнить ({count})", callback_data="action_done"),
-            InlineKeyboardButton(text=f"🗑 Удалить ({count})", callback_data="action_del"),
-        ])
-        keyboard_buttons.append([
-            InlineKeyboardButton(text=f"⏰ Перенести ({count})", callback_data="action_postpone")
+        cnt = len(selected_tasks[user_id])
+        kb.append([
+            InlineKeyboardButton(text=f"✔️ ({cnt})", callback_data="action_done"),
+            InlineKeyboardButton(text=f"🗑 ({cnt})", callback_data="action_del"),
+            InlineKeyboardButton(text=f"⏰ ({cnt})", callback_data="action_postpone")
         ])
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
 
-# --- ОБРАБОТЧИКИ КНОПОК ---
+# --- КОЛБЭККИ ---
 @dp.callback_query(lambda c: c.data.startswith("toggle_"))
 async def process_toggle(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    task_id = int(callback.data.replace("toggle_", ""))
-    
-    if user_id not in selected_tasks:
-        selected_tasks[user_id] = set()
-        
-    if task_id in selected_tasks[user_id]:
-        selected_tasks[user_id].remove(task_id)
-    else:
-        selected_tasks[user_id].add(task_id)
-        
+    uid = callback.from_user.id
+    tid = int(callback.data.split("_")[1])
+    if uid not in selected_tasks: selected_tasks[uid] = set()
+    if tid in selected_tasks[uid]: selected_tasks[uid].remove(tid)
+    else: selected_tasks[uid].add(tid)
     await callback.answer()
     await callback.message.delete()
     await show_tasks_interactive(callback.message)
 
 @dp.callback_query(lambda c: c.data.startswith("action_"))
 async def process_mass_action(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    action = callback.data.replace("action_", "")
+    uid = callback.from_user.id
+    act = callback.data.split("_")[1]
+    if uid not in selected_tasks or not selected_tasks[uid]:
+        await callback.answer("Выберите задачи!"); return
     
-    if user_id not in selected_tasks or not selected_tasks[user_id]:
-        await callback.answer("Сначала выберите задачи!")
-        return
-    
-    task_ids = list(selected_tasks[user_id])
-    count = len(task_ids)
-    
+    tids = list(selected_tasks[uid])
+    msg = ""
     try:
-        if action == "done":
-            for tid in task_ids:
+        if act == "done":
+            for tid in tids:
+                t = await task_service.get_task_by_id(tid)
                 await task_service.update_task(tid, is_done=True)
-            msg = f"✅ Выполнено задач: {count}"
-            
-        elif action == "del":
-            for tid in task_ids:
-                await task_service.delete_task(tid)
-            msg = f"🗑 Удалено задач: {count}"
-            
-        elif action == "postpone":
-            for tid in task_ids:
-                task = await task_service.get_task_by_id(tid)
-                if task and task.due_at:
-                    new_time = task.due_at + timedelta(days=1)
-                    await task_service.update_task(tid, due_at=new_time)
-                elif task:
-                    new_time = datetime.now(tz) + timedelta(days=1)
-                    await task_service.update_task(tid, due_at=new_time)
-            msg = f"⏰ Перенесено задач: {count}"
-        else:
-            msg = "❌ Неизвестное действие"
-    except Exception as e:
-        msg = f"❌ Ошибка: {e}"
-
-    selected_tasks[user_id].clear()
+                # Повторяющиеся задачи
+                if t and t.repeat_rule != "none" and t.due_at:
+                    delta = timedelta(days=1) if t.repeat_rule=="daily" else (timedelta(weeks=1) if t.repeat_rule=="weekly" else timedelta(days=30))
+                    await task_service.create_task(t.title, t.due_at + delta, t.priority, t.repeat_rule)
+            msg = f"✅ Выполнено: {len(tids)}"
+        elif act == "del":
+            for tid in tids: await task_service.delete_task(tid)
+            msg = f"🗑 Удалено: {len(tids)}"
+        elif act == "postpone":
+            for tid in tids:
+                t = await task_service.get_task_by_id(tid)
+                if t and t.due_at: await task_service.update_task(tid, due_at=t.due_at+timedelta(days=1))
+            msg = f"⏰ Перенесено: {len(tids)}"
+    except Exception as e: msg = f"❌ {e}"
+    
+    selected_tasks[uid].clear()
     await callback.answer(msg)
     await callback.message.delete()
     await show_tasks_interactive(callback.message)
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
-async def noop_callback(callback: types.CallbackQuery):
-    await callback.answer("Эта задача уже выполнена", show_alert=False)
+async def noop(callback: types.CallbackQuery):
+    await callback.answer("Задача выполнена", show_alert=False)
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- УТИЛИТЫ ---
 def parse_date(text):
-    """
-    Parse date from text with Russian support.
-    Returns: tuple (datetime | None, error_message | None)
-    """
     now = datetime.now(tz)
-    
     if "сегодня" in text.lower():
-        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-            # Validate time
-            if not (0 <= hour <= 23):
-                return None, f"⚠️ Час должен быть от 0 до 23. Вы указали: {hour}"
-            if not (0 <= minute <= 59):
-                return None, f"⚠️ Минуты должны быть от 0 до 59. Вы указали: {minute}"
-            
-            due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            return due_at, None
-    
+        m = re.search(r'(\d{1,2}):(\d{2})', text)
+        if m:
+            h, mi = int(m.group(1)), int(m.group(2))
+            if 0<=h<=23 and 0<=mi<=59: return now.replace(hour=h, minute=mi, second=0, microsecond=0)
     elif "завтра" in text.lower():
-        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
-        if time_match:
-            hour = int(time_match.group(1))
-            minute = int(time_match.group(2))
-            # Validate time
-            if not (0 <= hour <= 23):
-                return None, f"⚠️ Час должен быть от 0 до 23. Вы указали: {hour}"
-            if not (0 <= minute <= 59):
-                return None, f"⚠️ Минуты должны быть от 0 до 59. Вы указали: {minute}"
-            
-            tomorrow = now + timedelta(days=1)
-            due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            return due_at, None
+        m = re.search(r'(\d{1,2}):(\d{2})', text)
+        if m:
+            h, mi = int(m.group(1)), int(m.group(2))
+            if 0<=h<=23 and 0<=mi<=59: return (now+timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
     
-    # Try dateparser as fallback
     try:
-        parsed = dateparser.parse(text, settings={
-            "TIMEZONE": TZ, 
-            "RETURN_AS_TIMEZONE_AWARE": True, 
-            "PREFER_DATES_FROM": "future",
-        })
-        if parsed and (parsed - now) > timedelta(hours=1):
-            return parsed, None
-    except Exception as e:
-        logger.error(f"Dateparser error: {e}")
-    
-    # No date found, but no error either
-    return None, None
+        p = dateparser.parse(text, settings={"TIMEZONE": TZ, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"})
+        if p and (p-now)>timedelta(hours=1): return p
+    except: pass
+    return None
