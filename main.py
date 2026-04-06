@@ -1,21 +1,33 @@
 import os
 import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 # Google Calendar Scopes
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram.types import Update
 from database import init_db
-from config import TG_TOKEN, APP_HOST
+from config import TG_TOKEN, APP_HOST, TZ
 from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI()
+scheduler = AsyncIOScheduler()
+
+# =============================================================================
+# 📦 ФУНКЦИИ НАПОМИНАНИЙ
+# =============================================================================
 
 async def send_daily_summary():
     """Ежедневно в 9:00 отправляет список задач на день"""
     try:
         from services import task_service
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
         
         tz = ZoneInfo(TZ)
         today_tasks = await task_service.get_tasks_for_date(datetime.now(tz).date())
@@ -30,8 +42,10 @@ async def send_daily_summary():
             time_str = t.due_at.strftime("%H:%M") if t.due_at else ""
             text += f"{icon} {t.title} {time_str}\n"
         
-        # Замените YOUR_CHAT_ID на ваш ID (узнайте у @userinfobot)
-        await bot.send_message(chat_id=YOUR_CHAT_ID, text=text, parse_mode="HTML")
+        # Получаем ID из переменной окружения
+        user_id = os.environ.get('TELEGRAM_USER_ID')
+        if user_id:
+            await bot.send_message(chat_id=int(user_id), text=text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Daily summary error: {e}")
 
@@ -39,8 +53,6 @@ async def check_15h_reminders():
     """Проверяет задачи за 1.5 часа"""
     try:
         from services import task_service
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
         
         tz = ZoneInfo(TZ)
         now = datetime.now(tz)
@@ -50,11 +62,13 @@ async def check_15h_reminders():
             if t.due_at and not t.is_done and not t.is_reminded:
                 diff = (t.due_at - now).total_seconds()
                 if 0 < diff <= 5400:  # 1.5 часа = 5400 секунд
-                    await bot.send_message(
-                        chat_id=YOUR_CHAT_ID,
-                        text=f"⏰ <b>Напоминание:</b>\n{t.title}\n🕐 Осталось 1.5 часа",
-                        parse_mode="HTML"
-                    )
+                    user_id = os.environ.get('TELEGRAM_USER_ID')
+                    if user_id:
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text=f"⏰ <b>Напоминание:</b>\n{t.title}\n🕐 Осталось 1.5 часа",
+                            parse_mode="HTML"
+                        )
                     await task_service.update_task(t.id, is_reminded=True)
     except Exception as e:
         logger.error(f"Reminder check error: {e}")
@@ -62,16 +76,14 @@ async def check_15h_reminders():
 def add_reminder_jobs(scheduler):
     """Добавляет джобы напоминаний"""
     # Ежедневно в 9:00
-    scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary")
+    scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary", timezone=TZ)
     # Каждые 10 минут проверяем напоминания
     scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
     logger.info("✅ Reminder jobs added")
-    
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-app = FastAPI()
-scheduler = AsyncIOScheduler()
+# =============================================================================
+# 🚀 STARTUP
+# =============================================================================
 
 @app.on_event("startup")
 async def startup():
@@ -92,7 +104,7 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    from main import add_reminder_jobs
+    # Добавляем джобы напоминаний
     add_reminder_jobs(scheduler)
     
     scheduler.add_job(check_reminders, "interval", minutes=5, replace_existing=True)
@@ -101,6 +113,10 @@ async def startup():
 
 async def check_reminders():
     pass
+
+# =============================================================================
+# 🔗 WEBHOOKS
+# =============================================================================
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
@@ -114,60 +130,49 @@ async def telegram_webhook(request: Request):
         
 @app.post("/webhook/alice")
 async def alice_webhook(request: Request):
-    # Parse incoming JSON data from Yandex Dialogs
     data = await request.json()
     
-    # Extract user input
     user_command = data.get('request', {}).get('command', '')
     original_text = data.get('request', {}).get('original_utterance', '').lower()
     
-    # Fallback to original utterance if command field is empty
     if not user_command:
         user_command = original_text
 
-    # Default response if no conditions match
     response_text = "Я вас не поняла. Попробуйте: 'Добавь задачу ...' или 'Покажи список'."
     end_session = False
 
     try:
-        # 1. Handle Greeting or Start command
         if not user_command or "старт" in user_command or "привет" in user_command:
             response_text = "Привет! Я ваш планировщик. Скажите 'Добавь задачу', чтобы записать дело, или 'Покажи список', чтобы увидеть дела."
 
-        # 2. Handle Add Task command
         elif "добавь" in user_command:
-            # Remove keywords to isolate the actual task description
             task_title = user_command.replace("добавь", "").replace("задачу", "").replace("задание", "").strip()
             
             if task_title:
+                from services import task_service
                 await task_service.create_task(task_title)
                 response_text = f"Поняла, записала: '{task_title}'."
             else:
                 response_text = "Что именно добавить?"
 
-        # 3. Handle Show List command
         elif "список" in user_command or "задачи" in user_command or "дела" in user_command or "обнови" in user_command:
+            from services import task_service
             tasks = await task_service.get_all_tasks()
             
             if not tasks:
                 response_text = "Список пуст."
             else:
                 task_list = []
-                # Limit to 5 items to keep the voice response short
                 for t in tasks[:5]: 
                     task_list.append(f"{t.id}. {t.title}")
-                
                 response_text = "Вот список:\n" + "\n".join(task_list)
                 
-        # 4. Handle Delete command (currently unsupported via voice)
         elif "удали" in user_command or "сотри" in user_command:
              response_text = "Пока я умею только добавлять и показывать. Удалите задачу через Телеграм-бота."
 
     except Exception as e:
-        # Catch any database or runtime errors
         response_text = "Ой, что-то сломалось на сервере. Попробуйте позже."
 
-    # Return structured JSON response expected by Yandex Dialogs
     return JSONResponse({
         "version": "1.0",
         "session": data.get("session", {}),
@@ -185,19 +190,19 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "running", "db": "ok"}
+
+# =============================================================================
+# 🔐 GOOGLE CALENDAR AUTH
+# =============================================================================
+
 @app.get("/auth/login")
 async def auth_login():
     import secrets
     from urllib.parse import urlencode
     
-    # Generate PKCE parameters
-    code_verifier = secrets.token_urlsafe(128)
-    # Store in session or as query param (we'll use a simple approach)
-    
     client_id = os.environ.get('GOOGLE_CLIENT_ID')
     redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
     
-    # Build authorization URL manually
     params = {
         'client_id': client_id,
         'redirect_uri': redirect_uri,
@@ -209,7 +214,6 @@ async def auth_login():
     }
     
     auth_url = f"https://accounts.google.com/o/oauth2/auth?{urlencode(params)}"
-    
     return {"authorization_url": auth_url}
 
 @app.get("/auth/callback")
@@ -225,7 +229,6 @@ async def auth_callback(request: Request):
     client_secret = os.environ.get('GOOGLE_CLIENT_SECRET')
     redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
     
-    # Exchange code for token
     token_data = {
         'code': code,
         'client_id': client_id,
