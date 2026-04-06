@@ -113,14 +113,16 @@ async def show_task_list(message, tasks, title, save_context=True, is_edit=False
     
     for t in tasks[:15]:
         is_sel = t.id in selected_tasks[user_id]
+        
+        # Цветная иконка приоритета
         if t.priority == "red":
-            icon = "[RED]"
+            icon = "🔴"
         elif t.priority == "yellow":
-            icon = "[YEL]"
+            icon = "🟡"
         elif t.priority == "green":
-            icon = "[GRN]"
+            icon = "🟢"
         else:
-            icon = "[ ]"
+            icon = "⚪️"
         
         short_title = t.title[:30] + "..." if len(t.title) > 30 else t.title
         if t.due_at:
@@ -128,8 +130,9 @@ async def show_task_list(message, tasks, title, save_context=True, is_edit=False
         else:
             due_str = "No date"
         
+        # Если выделено — показываем закладку вместо иконки
         if is_sel:
-            btn_text = "[SEL] " + short_title + "\n" + due_str
+            btn_text = "🔖 " + short_title + "\n" + due_str
         else:
             btn_text = icon + " " + short_title + "\n" + due_str
             
@@ -140,6 +143,7 @@ async def show_task_list(message, tasks, title, save_context=True, is_edit=False
             
         kb.append([InlineKeyboardButton(text=btn_text, callback_data=cb_data)])
 
+    # Кнопки действий — только если есть выделенные
     if selected_tasks[user_id]:
         cnt = len(selected_tasks[user_id])
         kb.append([
@@ -227,13 +231,13 @@ async def handle_text(message):
     task = await task_service.create_task(clean, due_at, priority, repeat)
     
     if priority == "red":
-        emoji = "[RED]"
+        emoji = "🔴"
     elif priority == "yellow":
-        emoji = "[YEL]"
+        emoji = "🟡"
     elif priority == "green":
-        emoji = "[GRN]"
+        emoji = "🟢"
     else:
-        emoji = "[ ]"
+        emoji = "⚪️"
     
     if due_at:
         due_str = due_at.strftime("%d.%m at %H:%M")
