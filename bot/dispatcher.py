@@ -10,7 +10,7 @@ from config import TG_TOKEN, TZ
 from services import task_service
 
 logger = logging.getLogger(__name__)
-selected_tasks = {}
+selected_tasks = {}  # {user_id: {task_id1, task_id2, ...}}
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
@@ -112,21 +112,15 @@ async def handle_task_input(message: types.Message):
     due_at = parse_date(text)
     task = await task_service.create_task(clean, due_at, priority, repeat)
     
-    # Google Calendar (временно отключено для скорости)
-    # try:
-    #     from calendar_service import create_google_event
-    #     await create_google_event(clean, due_at.isoformat() if due_at else None)
-    # except: pass
-
     emoji = "🔴" if priority=="red" else ("🟡" if priority=="yellow" else "🟢")
-    # ✅ ИСПРАВЛЕНО: используем due_at.strftime() вместо task.format_due()
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}", reply_markup=get_main_menu_keyboard())
 
 # --- ИНТЕРАКТИВНЫЙ СПИСОК ---
 async def show_tasks_interactive(message, custom_tasks=None, title="Задачи", priority_filter=None):
     user_id = message.from_user.id
-    if user_id not in selected_tasks: selected_tasks[user_id] = set()
+    if user_id not in selected_tasks: 
+        selected_tasks[user_id] = set()
     
     tasks = custom_tasks if custom_tasks is not None else await task_service.get_all_tasks()
     if priority_filter:
@@ -138,9 +132,11 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
 
     text = f"📋 <b>{title}:</b>\n\n"
     kb = []
+    
     for t in tasks[:15]:
+        is_selected = t.id in selected_tasks[user_id]
         icon = "🏁" if t.is_done else ("🔴" if t.priority=="red" else ("🟢" if t.priority=="green" else "🟡"))
-        sel = "✅" if t.id in selected_tasks[user_id] else "⬜️"
+        sel = "✅" if is_selected else "⬜️"
         short = (t.title[:25]+"...") if len(t.title)>25 else t.title
         
         # Форматируем дату для отображения
@@ -149,94 +145,111 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
         else:
             due_display = "Без срока"
         
-        kb.append([InlineKeyboardButton(text=f"{sel} {icon} {short}\n🕐 {due_display}", callback_data=f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}")])
+        # Кнопка с задачей
+        btn_text = f"{sel} {icon} {short}\n🕐 {due_display}"
+        callback_data = f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}"
+        kb.append([InlineKeyboardButton(text=btn_text, callback_data=callback_data)])
 
+    # Кнопки действий (только если есть выбранные задачи)
     if selected_tasks[user_id]:
         cnt = len(selected_tasks[user_id])
         kb.append([
-            InlineKeyboardButton(text=f"✔️ ({cnt})", callback_data="action_done"),
-            InlineKeyboardButton(text=f"🗑 ({cnt})", callback_data="action_del"),
-            InlineKeyboardButton(text=f"⏰ ({cnt})", callback_data="action_postpone")
+            InlineKeyboardButton(text=f"✔️ Выполнить ({cnt})", callback_data="action_done"),
+            InlineKeyboardButton(text=f"🗑 Удалить ({cnt})", callback_data="action_del"),
         ])
+        kb.append([InlineKeyboardButton(text=f"⏰ Перенести ({cnt})", callback_data="action_postpone")])
 
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb)
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 # --- КОЛБЭККИ ---
 @dp.callback_query(lambda c: c.data.startswith("toggle_"))
 async def process_toggle(callback: types.CallbackQuery):
-    uid = callback.from_user.id
-    tid = int(callback.data.split("_")[1])
-    if uid not in selected_tasks: selected_tasks[uid] = set()
-    if tid in selected_tasks[uid]: selected_tasks[uid].remove(tid)
-    else: selected_tasks[uid].add(tid)
-    await callback.answer()
+    user_id = callback.from_user.id
+    task_id = int(callback.data.split("_")[1])
+    
+    if user_id not in selected_tasks: 
+        selected_tasks[user_id] = set()
+    
+    # Переключаем выделение задачи
+    if task_id in selected_tasks[user_id]:
+        selected_tasks[user_id].remove(task_id)
+        await callback.answer("❌ Снято с выбора", show_alert=False)
+    else:
+        selected_tasks[user_id].add(task_id)
+        await callback.answer("✅ Выбрано", show_alert=False)
+    
+    # Обновляем список
     await callback.message.delete()
     await show_tasks_interactive(callback.message)
 
 @dp.callback_query(lambda c: c.data.startswith("action_"))
 async def process_mass_action(callback: types.CallbackQuery):
-    uid = callback.from_user.id
-    act = callback.data.split("_")[1]
-    if uid not in selected_tasks or not selected_tasks[uid]:
-        await callback.answer("Выберите задачи!"); return
+    user_id = callback.from_user.id
+    action = callback.data.split("_")[1]
     
-    tids = list(selected_tasks[uid])
+    if user_id not in selected_tasks or not selected_tasks[user_id]:
+        await callback.answer("❌ Сначала выберите задачи!", show_alert=True)
+        return
+    
+    task_ids = list(selected_tasks[user_id])
     msg = ""
+    
     try:
-        if act == "done":
-            for tid in tids:
+        if action == "done":
+            for tid in task_ids:
                 t = await task_service.get_task_by_id(tid)
                 await task_service.update_task(tid, is_done=True)
                 # Повторяющиеся задачи
                 if t and t.repeat_rule != "none" and t.due_at:
                     delta = timedelta(days=1) if t.repeat_rule=="daily" else (timedelta(weeks=1) if t.repeat_rule=="weekly" else timedelta(days=30))
                     await task_service.create_task(t.title, t.due_at + delta, t.priority, t.repeat_rule)
-            msg = f"✅ Выполнено: {len(tids)}"
-        elif act == "del":
-            for tid in tids: await task_service.delete_task(tid)
-            msg = f"🗑 Удалено: {len(tids)}"
-        elif act == "postpone":
-            for tid in tids:
+            msg = f"✅ Выполнено задач: {len(task_ids)}"
+            
+        elif action == "del":
+            for tid in task_ids: 
+                await task_service.delete_task(tid)
+            msg = f"🗑 Удалено задач: {len(task_ids)}"
+            
+        elif action == "postpone":
+            for tid in task_ids:
                 t = await task_service.get_task_by_id(tid)
-                if t and t.due_at: await task_service.update_task(tid, due_at=t.due_at+timedelta(days=1))
-            msg = f"⏰ Перенесено: {len(tids)}"
-    except Exception as e: msg = f"❌ {e}"
+                if t and t.due_at: 
+                    await task_service.update_task(tid, due_at=t.due_at+timedelta(days=1))
+            msg = f"⏰ Перенесено задач: {len(task_ids)}"
+    except Exception as e: 
+        msg = f"❌ Ошибка: {e}"
     
-    selected_tasks[uid].clear()
-    await callback.answer(msg)
+    # Очищаем выбор
+    selected_tasks[user_id].clear()
+    
+    await callback.answer(msg, show_alert=False)
     await callback.message.delete()
     await show_tasks_interactive(callback.message)
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
 async def noop(callback: types.CallbackQuery):
-    await callback.answer("Задача выполнена", show_alert=False)
+    await callback.answer("Задача уже выполнена", show_alert=False)
 
 # --- УТИЛИТЫ ---
 def parse_date(text):
-    """Parse date - возвращает naive datetime для совместимости с БД"""
-    now = datetime.now()  # ✅ Naive datetime (без timezone)
-    
+    now = datetime.now(tz)
     if "сегодня" in text.lower():
         m = re.search(r'(\d{1,2}):(\d{2})', text)
         if m:
             h, mi = int(m.group(1)), int(m.group(2))
-            if 0<=h<=23 and 0<=mi<=59:
+            if 0<=h<=23 and 0<=mi<=59: 
                 return now.replace(hour=h, minute=mi, second=0, microsecond=0)
     elif "завтра" in text.lower():
         m = re.search(r'(\d{1,2}):(\d{2})', text)
         if m:
             h, mi = int(m.group(1)), int(m.group(2))
-            if 0<=h<=23 and 0<=mi<=59:
-                return (now + timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
+            if 0<=h<=23 and 0<=mi<=59: 
+                return (now+timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
     
     try:
-        # ✅ RETURN_AS_TIMEZONE_AWARE: False — возвращает naive datetime
-        p = dateparser.parse(text, settings={
-            "TIMEZONE": TZ, 
-            "RETURN_AS_TIMEZONE_AWARE": False, 
-            "PREFER_DATES_FROM": "future"
-        })
-        if p and (p - now) > timedelta(hours=1):
+        p = dateparser.parse(text, settings={"TIMEZONE": TZ, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"})
+        if p and (p-now)>timedelta(hours=1): 
             return p
     except: 
         pass
