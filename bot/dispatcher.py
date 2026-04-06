@@ -157,10 +157,24 @@ async def handle_task_input(message: types.Message):
 
 async def process_task_creation(message: types.Message, text: str):
     if not text:
-        await message.answer("❌ Напиши текст задачи")
+        await message.answer("❌ Напиши текст задачи", reply_markup=get_main_menu_keyboard())
         return
 
-    due_at = parse_date(text)
+    due_at, error = parse_date(text)
+    
+    # If there's a parsing error, show it and ask to retry
+    if error:
+        await message.answer(
+            f"{error}\n\n"
+            f"📝 <b>Пожалуйста, исправь время:</b>\n"
+            f"• Часы: 0-23 (например, 14:00, а не 29:00)\n"
+            f"• Минуты: 0-59 (например, 14:30, а не 14:99)\n\n"
+            f"Пример: <i>Купить молоко сегодня 18:00</i>",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
     task = await task_service.create_task(text, due_at)
 
     try:
@@ -182,7 +196,7 @@ async def process_task_creation(message: types.Message, text: str):
         await message.answer(
             f"✅ Задача добавлена!\n"
             f"📝 {task.title}\n"
-            f"⚠️ Не удалось распознать дату",
+            f"⚠️ Не удалось распознать дату, задача без срока",
             reply_markup=get_main_menu_keyboard()
         )
 
