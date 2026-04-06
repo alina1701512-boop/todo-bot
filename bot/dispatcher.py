@@ -20,13 +20,13 @@ def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="📅 Сегодня")],
         [KeyboardButton(text="📅 Завтра"), KeyboardButton(text="➕ Добавить")],
-        [KeyboardButton(text=" Срочные"), KeyboardButton(text="🟡 Средние")],
+        [KeyboardButton(text="🔴 Срочные"), KeyboardButton(text="🟡 Средние")],
         [KeyboardButton(text="📆 Неделя"), KeyboardButton(text="⚙️ Меню")]
     ], resize_keyboard=True)
 
 def get_priority_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text=" Важные сегодня"), KeyboardButton(text="🟢 Важные завтра")],
+        [KeyboardButton(text="🔴 Важные сегодня"), KeyboardButton(text="🟢 Важные завтра")],
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
@@ -50,7 +50,6 @@ def parse_repeat(text: str) -> str:
     return "none"
 
 def clean_title(text: str) -> str:
-    # Убираем ключевые слова приоритета и повтора из названия задачи
     words_to_remove = ["красный", "срочно", "важно", "горит", "зеленый", "легко", "лайт", 
                        "каждый день", "каждую неделю", "каждый месяц", "ежедневно", "еженедельно"]
     for w in words_to_remove:
@@ -77,7 +76,7 @@ async def menu_back(message: types.Message):
     await message.answer("🔙 Главное меню", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda message: message.text in ["📋 Все задачи", "📅 Сегодня", "📅 Завтра", "📆 Неделя", 
-                                            "🔴 Срочные", "🟡 Средние", "🟢 Важные сегодня", "🟢 Важные завтра"])
+                                            "🔴 Срочные", "🟡 Средние", "🔴 Важные сегодня", "🟢 Важные завтра"])
 async def handle_menu_buttons(message: types.Message):
     text = message.text
     now = datetime.now(tz)
@@ -88,7 +87,7 @@ async def handle_menu_buttons(message: types.Message):
     elif text == "📆 Неделя": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_week(now.date()), title="Неделя")
     elif text == "🔴 Срочные": await show_tasks_interactive(message, custom_tasks=await task_service.get_all_tasks(), title="Срочные", priority_filter="red")
     elif text == "🟡 Средние": await show_tasks_interactive(message, custom_tasks=await task_service.get_all_tasks(), title="Средние", priority_filter="yellow")
-    elif text == "🟢 Важные сегодня": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date(), "red"), title="Важные сегодня")
+    elif text == "🔴 Важные сегодня": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date(), "red"), title="Важные сегодня")
     elif text == "🟢 Важные завтра": await show_tasks_interactive(message, custom_tasks=await task_service.get_tasks_for_date(now.date()+timedelta(days=1), "red"), title="Важные завтра")
 
 @dp.message(lambda message: message.text == "➕ Добавить")
@@ -102,7 +101,7 @@ async def cancel_action(message: types.Message):
 # --- ОБРАБОТКА ТЕКСТА (ДОБАВЛЕНИЕ) ---
 @dp.message(lambda message: message.text and not message.text.startswith('/') and message.text not in [
     "📋 Все задачи", "📅 Сегодня", "📅 Завтра", "➕ Добавить", "📆 Неделя", "⚙️ Меню", 
-    "🔴 Срочные", "🟡 Средние", "🟢 Важные сегодня", "🟢 Важные завтра", "🔙 Назад", "❌ Отмена"
+    "🔴 Срочные", "🟡 Средние", "🔴 Важные сегодня", "🟢 Важные завтра", "🔙 Назад", "❌ Отмена"
 ])
 async def handle_task_input(message: types.Message):
     text = message.text.strip()
@@ -113,14 +112,16 @@ async def handle_task_input(message: types.Message):
     due_at = parse_date(text)
     task = await task_service.create_task(clean, due_at, priority, repeat)
     
-    # Google Calendar
-    try:
-        from calendar_service import create_google_event
-        await create_google_event(clean, due_at.isoformat() if due_at else None)
-    except: pass
+    # Google Calendar (временно отключено для скорости)
+    # try:
+    #     from calendar_service import create_google_event
+    #     await create_google_event(clean, due_at.isoformat() if due_at else None)
+    # except: pass
 
     emoji = "🔴" if priority=="red" else ("🟡" if priority=="yellow" else "🟢")
-    await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due() if due_at else 'Без срока'}", reply_markup=get_main_menu_keyboard())
+    # ✅ ИСПРАВЛЕНО: используем due_at.strftime() вместо task.format_due()
+    due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
+    await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}", reply_markup=get_main_menu_keyboard())
 
 # --- ИНТЕРАКТИВНЫЙ СПИСОК ---
 async def show_tasks_interactive(message, custom_tasks=None, title="Задачи", priority_filter=None):
@@ -141,7 +142,14 @@ async def show_tasks_interactive(message, custom_tasks=None, title="Задачи
         icon = "🏁" if t.is_done else ("🔴" if t.priority=="red" else ("🟢" if t.priority=="green" else "🟡"))
         sel = "✅" if t.id in selected_tasks[user_id] else "⬜️"
         short = (t.title[:25]+"...") if len(t.title)>25 else t.title
-        kb.append([InlineKeyboardButton(text=f"{sel} {icon} {short}", callback_data=f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}")])
+        
+        # Форматируем дату для отображения
+        if t.due_at:
+            due_display = t.due_at.strftime("%d.%m %H:%M")
+        else:
+            due_display = "Без срока"
+        
+        kb.append([InlineKeyboardButton(text=f"{sel} {icon} {short}\n🕐 {due_display}", callback_data=f"toggle_{t.id}" if not t.is_done else f"noop_{t.id}")])
 
     if selected_tasks[user_id]:
         cnt = len(selected_tasks[user_id])
