@@ -10,6 +10,63 @@ from config import TG_TOKEN, APP_HOST
 from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+async def send_daily_summary():
+    """Ежедневно в 9:00 отправляет список задач на день"""
+    try:
+        from services import task_service
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        
+        tz = ZoneInfo(TZ)
+        today_tasks = await task_service.get_tasks_for_date(datetime.now(tz).date())
+        active = [t for t in today_tasks if not t.is_done]
+        
+        if not active:
+            return
+        
+        text = "🌅 <b>Доброе утро! План на сегодня:</b>\n\n"
+        for t in active[:10]:
+            icon = "🔴" if t.priority=="red" else ("🟢" if t.priority=="green" else "🟡")
+            time_str = t.due_at.strftime("%H:%M") if t.due_at else ""
+            text += f"{icon} {t.title} {time_str}\n"
+        
+        # Замените YOUR_CHAT_ID на ваш ID (узнайте у @userinfobot)
+        await bot.send_message(chat_id=YOUR_CHAT_ID, text=text, parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Daily summary error: {e}")
+
+async def check_15h_reminders():
+    """Проверяет задачи за 1.5 часа"""
+    try:
+        from services import task_service
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        
+        tz = ZoneInfo(TZ)
+        now = datetime.now(tz)
+        tasks = await task_service.get_all_tasks()
+        
+        for t in tasks:
+            if t.due_at and not t.is_done and not t.is_reminded:
+                diff = (t.due_at - now).total_seconds()
+                if 0 < diff <= 5400:  # 1.5 часа = 5400 секунд
+                    await bot.send_message(
+                        chat_id=YOUR_CHAT_ID,
+                        text=f"⏰ <b>Напоминание:</b>\n{t.title}\n🕐 Осталось 1.5 часа",
+                        parse_mode="HTML"
+                    )
+                    await task_service.update_task(t.id, is_reminded=True)
+    except Exception as e:
+        logger.error(f"Reminder check error: {e}")
+
+def add_reminder_jobs(scheduler):
+    """Добавляет джобы напоминаний"""
+    # Ежедневно в 9:00
+    scheduler.add_job(send_daily_summary, "cron", hour=9, minute=0, id="daily_summary")
+    # Каждые 10 минут проверяем напоминания
+    scheduler.add_job(check_15h_reminders, "interval", minutes=10, id="reminders_15h")
+    logger.info("✅ Reminder jobs added")
+    
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
