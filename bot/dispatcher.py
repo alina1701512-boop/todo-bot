@@ -2,6 +2,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import dateparser
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
@@ -26,8 +27,36 @@ async def cmd_add(message: types.Message):
         await message.answer("📝 Напиши задачу. Пример: `Купить молоко завтра в 18:00`")
         return
 
-    parsed = dateparser.parse(text, settings={"TIMEZONE": TZ, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"})
-    due_at = parsed if parsed and (parsed - datetime.now(tz)) > timedelta(hours=1) else None
+    # Manual parsing for Russian dates
+    due_at = None
+    now = datetime.now(tz)
+    
+    # Check for "сегодня" (today)
+    if "сегодня" in text.lower():
+        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    
+    # Check for "завтра" (tomorrow)
+    elif "завтра" in text.lower():
+        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
+        if time_match:
+            hour = int(time_match.group(1))
+            minute = int(time_match.group(2))
+            tomorrow = now + timedelta(days=1)
+            due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    
+    # Try dateparser as fallback
+    if not due_at:
+        parsed = dateparser.parse(text, settings={
+            "TIMEZONE": TZ, 
+            "RETURN_AS_TIMEZONE_AWARE": True, 
+            "PREFER_DATES_FROM": "future",
+        })
+        if parsed and (parsed - now) > timedelta(hours=1):
+            due_at = parsed
 
     task = await task_service.create_task(text, due_at)
 
@@ -40,7 +69,10 @@ async def cmd_add(message: types.Message):
     except Exception as e:
         logger.error(f"Failed to create calendar event: {e}")
 
-    await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n{task.format_due()}")
+    if due_at:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due()}")
+    else:
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату")
 
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
@@ -75,7 +107,8 @@ async def process_callback(callback: types.CallbackQuery):
         await callback.answer("🗑 Удалено")
 
     await cmd_list(callback.message)
-  # Handle any text message as a task (without /add command)
+
+# Handle any text message as a task (without /add command)
 @dp.message(lambda message: message.text and not message.text.startswith('/'))
 async def handle_text_as_task(message: types.Message):
     text = message.text.strip()
@@ -86,8 +119,6 @@ async def handle_text_as_task(message: types.Message):
     
     # Check for "сегодня" (today)
     if "сегодня" in text.lower():
-        # Extract time like "14:00" or "18:00"
-        import re
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
             hour = int(time_match.group(1))
@@ -97,7 +128,6 @@ async def handle_text_as_task(message: types.Message):
     
     # Check for "завтра" (tomorrow)
     elif "завтра" in text.lower():
-        import re
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
             hour = int(time_match.group(1))
@@ -131,6 +161,6 @@ async def handle_text_as_task(message: types.Message):
     
     # Send response
     if due_at:
-        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n {task.format_due()}")
+        await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n🕐 {task.format_due()}")
     else:
         await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату, задача без срока")
