@@ -12,6 +12,9 @@ from services import task_service
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+# Хранилище для выбранных задач: {user_id: {task_id, task_id...}}
+selected_tasks = {}
+
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
@@ -20,16 +23,11 @@ dp = Dispatcher()
 async def cmd_start(message: types.Message):
     await message.answer(
         "👋 Привет! Я твой умный список дел.\n\n"
-        "<b>📝 Команды:</b>\n"
-        "/add <задача> [дата/время] - добавить задачу\n"
-        "/list - все задачи\n"
-        "/today - задачи на сегодня\n"
-        "/tomorrow - задачи на завтра\n"
-        "/week - задачи на неделю\n"
-        "/done <id> - выполнить задачу\n"
-        "/delete <id> - удалить задачу\n"
-        "/help - помощь\n\n"
-        "💡 Или просто напиши текст с датой: 'Купить молоко завтра в 18:00'",
+        "<b>📝 Как управлять:</b>\n"
+        "1. Просто напиши задачу с датой: <i>Купить молоко завтра в 18:00</i>\n"
+        "2. Нажми на /list, чтобы увидеть список.\n"
+        "3. Нажимай на задачи, чтобы выделить их (✅).\n"
+        "4. Внизу нажми 'Выполнить' или 'Удалить'.",
         parse_mode="HTML"
     )
 
@@ -59,116 +57,7 @@ async def cmd_add(message: types.Message):
 
 @dp.message(Command("list"))
 async def cmd_list(message: types.Message):
-    tasks = await task_service.get_all_tasks()
-    await show_tasks(message, tasks, "Все задачи")
-
-@dp.message(Command("today"))
-async def cmd_today(message: types.Message):
-    tasks = await task_service.get_tasks_for_date(datetime.now(tz).date())
-    await show_tasks(message, tasks, "Задачи на сегодня")
-
-@dp.message(Command("tomorrow"))
-async def cmd_tomorrow(message: types.Message):
-    tomorrow = datetime.now(tz).date() + timedelta(days=1)
-    tasks = await task_service.get_tasks_for_date(tomorrow)
-    await show_tasks(message, tasks, "Задачи на завтра")
-
-@dp.message(Command("week"))
-async def cmd_week(message: types.Message):
-    tasks = await task_service.get_all_tasks()
-    today = datetime.now(tz).date()
-    week_end = today + timedelta(days=7)
-    
-    week_tasks = [t for t in tasks if t.due_at and today <= t.due_at.date() <= week_end]
-    await show_tasks(message, week_tasks, "Задачи на неделю")
-
-async def show_tasks(message: types.Message, tasks, title):
-    if not tasks:
-        await message.answer(f"📋 {title}: список пуст")
-        return
-
-    text = f"📋 <b>{title}:</b>\n\n"
-    for t in tasks[:10]:
-        status = "✅" if t.is_done else "⬜️"
-        safe_title = t.title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        text += f"{status} <code>{t.id}</code>. {safe_title}\n"
-        if t.due_at:
-            text += f"   🕐 {t.format_due()}\n"
-        text += "\n"
-
-    keyboard_buttons = []
-    for t in tasks[:5]:
-        if not t.is_done:
-            keyboard_buttons.append([
-                InlineKeyboardButton(text=f"✔️ {t.id}", callback_data=f"done_{t.id}"),
-                InlineKeyboardButton(text=f"🗑 {t.id}", callback_data=f"del_{t.id}"),
-                InlineKeyboardButton(text=f"⏰ {t.id}", callback_data=f"postpone_{t.id}")
-            ])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons) if keyboard_buttons else None
-    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-
-@dp.message(Command("done"))
-async def cmd_done(message: types.Message):
-    try:
-        task_id = int(message.text.replace("/done", "").strip())
-        await task_service.update_task(task_id, is_done=True)
-        await message.answer(f"✅ Задача #{task_id} выполнена!")
-    except (ValueError, IndexError):
-        await message.answer("❌ Укажите ID задачи. Пример: `/done 5`")
-
-@dp.message(Command("delete"))
-async def cmd_delete(message: types.Message):
-    try:
-        task_id = int(message.text.replace("/delete", "").strip())
-        await task_service.delete_task(task_id)
-        await message.answer(f"🗑 Задача #{task_id} удалена!")
-    except (ValueError, IndexError):
-        await message.answer("❌ Укажите ID задачи. Пример: `/delete 5`")
-
-@dp.message(Command("postpone"))
-async def cmd_postpone(message: types.Message):
-    args = message.text.replace("/postpone", "").strip().split()
-    if len(args) < 2:
-        await message.answer("❌ Пример: `/postpone 5 завтра 15:00`")
-        return
-    
-    try:
-        task_id = int(args[0])
-        date_text = " ".join(args[1:])
-        due_at = parse_date(date_text)
-        
-        if not due_at:
-            await message.answer("❌ Не удалось распознать дату")
-            return
-        
-        await task_service.update_task(task_id, due_at=due_at)
-        await message.answer(f"⏰ Задача #{task_id} перенесена")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
-@dp.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_") or c.data.startswith("postpone_"))
-async def process_callback(callback: types.CallbackQuery):
-    action, task_id = callback.data.split("_")
-    task_id = int(task_id)
-
-    if action == "done":
-        await task_service.update_task(task_id, is_done=True)
-        await callback.answer("✅ Отмечено")
-    elif action == "del":
-        await task_service.delete_task(task_id)
-        await callback.answer("🗑 Удалено")
-    elif action == "postpone":
-        task = await task_service.get_task_by_id(task_id)
-        if task and task.due_at:
-            new_time = task.due_at + timedelta(days=1)
-            await task_service.update_task(task_id, due_at=new_time)
-            await callback.answer(f"⏰ Перенесено")
-        else:
-            await callback.answer("⏰ Перенесено на завтра")
-
-    tasks = await task_service.get_all_tasks()
-    await show_tasks(callback.message, tasks, "Все задачи")
+    await show_tasks_interactive(message)
 
 @dp.message(lambda message: message.text and not message.text.startswith('/'))
 async def handle_text_as_task(message: types.Message):
@@ -190,11 +79,139 @@ async def handle_text_as_task(message: types.Message):
     else:
         await message.answer(f"✅ Задача добавлена!\n📝 {task.title}\n⚠️ Не удалось распознать дату")
 
+# --- ГЛАВНАЯ ФУНКЦИЯ ОТОБРАЖЕНИЯ СПИСКА ---
+async def show_tasks_interactive(message_or_callback, is_callback=False):
+    # Определяем, что пришло (сообщение или колбэк)
+    if is_callback:
+        user_id = message_or_callback.from_user.id
+        target_message = message_or_callback.message
+    else:
+        user_id = message_or_callback.from_user.id
+        target_message = message_or_callback
+
+    tasks = await task_service.get_all_tasks()
+    
+    # Инициализируем список выбранных для этого юзера
+    if user_id not in selected_tasks:
+        selected_tasks[user_id] = set()
+
+    if not tasks:
+        text = "📋 Список пуст. Добавь задачу!"
+        keyboard = None
+    else:
+        text = "📋 <b>Нажми на задачи, чтобы выделить их:</b>\n\n"
+        keyboard_buttons = []
+        
+        # Отображаем последние 15 задач, чтобы не превысить лимиты телеграм
+        for t in tasks[:15]:
+            is_selected = t.id in selected_tasks[user_id]
+            status_icon = "✅" if is_selected else "⬜️"
+            
+            # Обрезаем текст, если слишком длинный, чтобы кнопка влезла
+            short_title = (t.title[:25] + "...") if len(t.title) > 25 else t.title
+            btn_text = f"{status_icon} {short_title}"
+            
+            # Если задача выполнена, делаем её неактивной
+            if t.is_done:
+                btn_text = f"🏁 {short_title}"
+                keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"noop_{t.id}")])
+            else:
+                keyboard_buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"toggle_{t.id}")])
+
+        # Добавляем кнопки действий внизу
+        if selected_tasks[user_id]:
+            count = len(selected_tasks[user_id])
+            action_row = [
+                InlineKeyboardButton(text=f"✔️ Выполнить ({count})", callback_data="action_done"),
+                InlineKeyboardButton(text=f"🗑 Удалить ({count})", callback_data="action_del"),
+                InlineKeyboardButton(text=f"⏰ Перенести ({count})", callback_data="action_postpone")
+            ]
+            keyboard_buttons.append(action_row)
+        else:
+             # Если ничего не выбрано, показываем неактивные кнопки действий или скрываем их
+             # Для экономии места скроем, пока не выбрано
+             pass
+
+        keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+
+    # Если это колбэк (нажатие кнопки), мы редактируем сообщение
+    if is_callback:
+        try:
+            await target_message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        except Exception:
+            pass # Игнорируем ошибку если текст не изменился
+    else:
+        await target_message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+
+# --- ОБРАБОТЧИК ВЫБОРА ЗАДАЧИ (ГАЛОЧКА) ---
+@dp.callback_query(lambda c: c.data.startswith("toggle_"))
+async def process_toggle(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    task_id = int(callback.data.replace("toggle_", ""))
+    
+    if user_id not in selected_tasks:
+        selected_tasks[user_id] = set()
+        
+    if task_id in selected_tasks[user_id]:
+        selected_tasks[user_id].remove(task_id)
+    else:
+        selected_tasks[user_id].add(task_id)
+        
+    await callback.answer("Выбор изменен")
+    await show_tasks_interactive(callback, is_callback=True)
+
+# --- ОБРАБОТЧИК МАССОВЫХ ДЕЙСТВИЙ ---
+@dp.callback_query(lambda c: c.data.startswith("action_"))
+async def process_mass_action(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    action = callback.data.replace("action_", "")
+    
+    if user_id not in selected_tasks or not selected_tasks[user_id]:
+        await callback.answer("Сначала выберите задачи!")
+        return
+    
+    task_ids = list(selected_tasks[user_id])
+    count = len(task_ids)
+    
+    msg = ""
+    
+    try:
+        if action == "done":
+            for tid in task_ids:
+                await task_service.update_task(tid, is_done=True)
+            msg = f"✅ Выполнено задач: {count}"
+            
+        elif action == "del":
+            for tid in task_ids:
+                await task_service.delete_task(tid)
+            msg = f"🗑 Удалено задач: {count}"
+            
+        elif action == "postpone":
+            for tid in task_ids:
+                task = await task_service.get_task_by_id(tid)
+                if task and task.due_at:
+                    new_time = task.due_at + timedelta(days=1)
+                    await task_service.update_task(tid, due_at=new_time)
+                elif task:
+                    new_time = datetime.now(tz) + timedelta(days=1)
+                    await task_service.update_task(tid, due_at=new_time)
+            msg = f"⏰ Перенесено задач: {count}"
+    except Exception as e:
+        msg = f"Ошибка: {e}"
+
+    # Очищаем выбор после действия
+    selected_tasks[user_id].clear()
+    
+    await callback.answer(msg)
+    await show_tasks_interactive(callback, is_callback=True)
+
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def parse_date(text):
     """Parse date from text with Russian support"""
     due_at = None
     now = datetime.now(tz)
     
+    # Check for "сегодня" (today)
     if "сегодня" in text.lower():
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
@@ -202,6 +219,7 @@ def parse_date(text):
             minute = int(time_match.group(2))
             due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     
+    # Check for "завтра" (tomorrow)
     elif "завтра" in text.lower():
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
@@ -210,6 +228,7 @@ def parse_date(text):
             tomorrow = now + timedelta(days=1)
             due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
     
+    # Try dateparser as fallback
     if not due_at:
         parsed = dateparser.parse(text, settings={
             "TIMEZONE": TZ, 
