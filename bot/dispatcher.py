@@ -303,8 +303,10 @@ async def noop_callback(callback: types.CallbackQuery):
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 def parse_date(text):
-    """Parse date from text with Russian support"""
-    due_at = None
+    """
+    Parse date from text with Russian support.
+    Returns: tuple (datetime | None, error_message | None)
+    """
     now = datetime.now(tz)
     
     if "сегодня" in text.lower():
@@ -312,23 +314,41 @@ def parse_date(text):
         if time_match:
             hour = int(time_match.group(1))
             minute = int(time_match.group(2))
+            # Validate time
+            if not (0 <= hour <= 23):
+                return None, f"⚠️ Час должен быть от 0 до 23. Вы указали: {hour}"
+            if not (0 <= minute <= 59):
+                return None, f"⚠️ Минуты должны быть от 0 до 59. Вы указали: {minute}"
+            
             due_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return due_at, None
     
     elif "завтра" in text.lower():
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
         if time_match:
             hour = int(time_match.group(1))
             minute = int(time_match.group(2))
+            # Validate time
+            if not (0 <= hour <= 23):
+                return None, f"⚠️ Час должен быть от 0 до 23. Вы указали: {hour}"
+            if not (0 <= minute <= 59):
+                return None, f"⚠️ Минуты должны быть от 0 до 59. Вы указали: {minute}"
+            
             tomorrow = now + timedelta(days=1)
             due_at = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return due_at, None
     
-    if not due_at:
+    # Try dateparser as fallback
+    try:
         parsed = dateparser.parse(text, settings={
             "TIMEZONE": TZ, 
             "RETURN_AS_TIMEZONE_AWARE": True, 
             "PREFER_DATES_FROM": "future",
         })
         if parsed and (parsed - now) > timedelta(hours=1):
-            due_at = parsed
+            return parsed, None
+    except Exception as e:
+        logger.error(f"Dateparser error: {e}")
     
-    return due_at
+    # No date found, but no error either
+    return None, None
