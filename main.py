@@ -90,6 +90,13 @@ async def startup():
     try:
         await init_db()
         logger.info("✅ Database initialized")
+        
+        # === РАСКОММЕНТИРОВАНО ДЛЯ СБРОСА БД (ОДИН РАЗ!) ===
+        from database import reset_database
+        await reset_database()
+        logger.info("🗑 Database reset - old tasks deleted!")
+        # ===================================================
+        
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
