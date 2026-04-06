@@ -213,20 +213,31 @@ async def noop(callback: types.CallbackQuery):
 
 # --- УТИЛИТЫ ---
 def parse_date(text):
-    now = datetime.now(tz)
+    """Parse date - возвращает naive datetime для совместимости с БД"""
+    now = datetime.now()  # ✅ Naive datetime (без timezone)
+    
     if "сегодня" in text.lower():
         m = re.search(r'(\d{1,2}):(\d{2})', text)
         if m:
             h, mi = int(m.group(1)), int(m.group(2))
-            if 0<=h<=23 and 0<=mi<=59: return now.replace(hour=h, minute=mi, second=0, microsecond=0)
+            if 0<=h<=23 and 0<=mi<=59:
+                return now.replace(hour=h, minute=mi, second=0, microsecond=0)
     elif "завтра" in text.lower():
         m = re.search(r'(\d{1,2}):(\d{2})', text)
         if m:
             h, mi = int(m.group(1)), int(m.group(2))
-            if 0<=h<=23 and 0<=mi<=59: return (now+timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
+            if 0<=h<=23 and 0<=mi<=59:
+                return (now + timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
     
     try:
-        p = dateparser.parse(text, settings={"TIMEZONE": TZ, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"})
-        if p and (p-now)>timedelta(hours=1): return p
-    except: pass
+        # ✅ RETURN_AS_TIMEZONE_AWARE: False — возвращает naive datetime
+        p = dateparser.parse(text, settings={
+            "TIMEZONE": TZ, 
+            "RETURN_AS_TIMEZONE_AWARE": False, 
+            "PREFER_DATES_FROM": "future"
+        })
+        if p and (p - now) > timedelta(hours=1):
+            return p
+    except: 
+        pass
     return None
