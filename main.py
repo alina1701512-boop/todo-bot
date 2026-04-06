@@ -127,8 +127,7 @@ async def health():
     return {"status": "running", "db": "ok"}
 @app.get("/auth/login")
 async def auth_login():
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    import json
+    from google_auth_oauthlib.flow import Flow
     
     client_config = {
         "web": {
@@ -140,19 +139,23 @@ async def auth_login():
         }
     }
     
-    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-    flow.redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    )
     
     authorization_url, state = flow.authorization_url(
         access_type='offline',
         include_granted_scopes='true',
-        prompt='consent' 
+        prompt='consent'
     )
+    
     return {"authorization_url": authorization_url}
 
 @app.get("/auth/callback")
 async def auth_callback(request: Request):
-    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google_auth_oauthlib.flow import Flow
     
     code = request.query_params.get('code')
     if not code:
@@ -168,8 +171,11 @@ async def auth_callback(request: Request):
         }
     }
     
-    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-    flow.redirect_uri = f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=f"{os.environ.get('RENDER_EXTERNAL_URL')}/auth/callback"
+    )
     
     try:
         flow.fetch_token(code=code)
@@ -182,8 +188,3 @@ async def auth_callback(request: Request):
         }
     except Exception as e:
         return {"error": str(e)}
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    logger.info(f"🌍 Starting server on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
