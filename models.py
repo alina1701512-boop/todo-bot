@@ -25,3 +25,20 @@ class Task(Base):
     is_reminded = Column(Boolean, default=False)  # Чтобы не спамить напоминаниями
     priority = Column(String, default="yellow")    # red, yellow, green
     repeat_rule = Column(String, default="none")   # none, daily, weekly, monthly
+
+from sqlalchemy import text
+
+async def add_missing_columns():
+    """Добавляет недостающие колонки в таблицу tasks"""
+    try:
+        async with engine.begin() as conn:
+            # Проверяем и добавляем колонки
+            await conn.execute(text("""
+                ALTER TABLE tasks 
+                ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'yellow',
+                ADD COLUMN IF NOT EXISTS repeat_rule VARCHAR(20) DEFAULT 'none',
+                ADD COLUMN IF NOT EXISTS is_reminded BOOLEAN DEFAULT FALSE
+            """))
+            logger.info("✅ Added missing columns to tasks table")
+    except Exception as e:
+        logger.error(f"❌ Error adding columns: {e}")
