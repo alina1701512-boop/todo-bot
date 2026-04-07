@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
+from services.ai_parser import parse_task_with_ai, make_naive  # ✅ Импорт AI-парсера
 
 logger = logging.getLogger(__name__)
 user_context = {}
@@ -72,13 +73,13 @@ def parse_date(text):
         "послезавтрп": "послезавтра", "послезавтпа": "послезавтра",
         "неделю": "неделю", "неделе": "неделю", "недели": "неделю",
         "месяц": "месяц", "месяца": "месяц", "месяце": "месяц",
-        "выходные": "выходные", "выходных": "выходные", "выходные": "выходные"
+        "выходные": "выходные", "выходных": "выходные"
     }
     
     for wrong, correct in corrections.items():
         text_lower = text_lower.replace(wrong, correct)
     
-    # 2. ИЗВЛЕЧЕНИЕ ВРЕМЕНИ (18:00, 18.00, в 18:00)
+    # 2. ИЗВЛЕЧЕНИЕ ВРЕМЕНИ
     time_match = re.search(r'(\d{1,2})[:.](\d{2})', text_lower)
     target_hour = None
     target_minute = 0
@@ -90,87 +91,69 @@ def parse_date(text):
             target_hour = None
     
     # 3. РАСПОЗНАВАНИЕ ДАТ
-    
-    # "сегодня"
     if "сегодня" in text_lower:
         if target_hour is not None:
             return now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return now.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "завтра"
     if "завтра" in text_lower:
         tomorrow = now + timedelta(days=1)
         if target_hour is not None:
             return tomorrow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return tomorrow.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "послезавтра"
     if "послезавтра" in text_lower:
         day_after = now + timedelta(days=2)
         if target_hour is not None:
             return day_after.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return day_after.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "на днях" → +2-3 дня
-    if "на днях" in text_lower or "на днях" in text_lower:
+    if "на днях" in text_lower:
         days_later = now + timedelta(days=3)
         if target_hour is not None:
             return days_later.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return days_later.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "в конце месяца" → 28-30 число
     if "в конце месяца" in text_lower or "конце месяца" in text_lower:
-        # Последний день текущего месяца
         if now.month == 12:
             end_of_month = datetime(now.year + 1, 1, 1, tzinfo=tz) - timedelta(days=1)
         else:
             end_of_month = datetime(now.year, now.month + 1, 1, tzinfo=tz) - timedelta(days=1)
-        
         if target_hour is not None:
             return end_of_month.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return end_of_month.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "в начале месяца" → 1-5 число
     if "в начале месяца" in text_lower or "начале месяца" in text_lower:
-        # 5-е число текущего или следующего месяца
         if now.day > 5:
             target_date = datetime(now.year, now.month + 1, 5, tzinfo=tz) if now.month < 12 else datetime(now.year + 1, 1, 5, tzinfo=tz)
         else:
             target_date = datetime(now.year, now.month, 5, tzinfo=tz)
-        
         if target_hour is not None:
             return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "в середине месяца" → 14-16 число
     if "в середине месяца" in text_lower or "середине месяца" in text_lower:
-        # 15-е число
         if now.day > 15:
             target_date = datetime(now.year, now.month + 1, 15, tzinfo=tz) if now.month < 12 else datetime(now.year + 1, 1, 15, tzinfo=tz)
         else:
             target_date = datetime(now.year, now.month, 15, tzinfo=tz)
-        
         if target_hour is not None:
             return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "в выходные" → ближайшая суббота/воскресенье
     if "в выходные" in text_lower or "выходные" in text_lower:
         days_until_saturday = (5 - now.weekday()) % 7
         if days_until_saturday == 0:
-            days_until_saturday = 7  # Если сегодня суббота, то следующие выходные
+            days_until_saturday = 7
         saturday = now + timedelta(days=days_until_saturday)
-        
         if target_hour is not None:
             return saturday.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return saturday.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "через N дней/недель/месяцев"
     days_match = re.search(r'через\s+(\d+)\s*(день|дня|дней|неделю|недели|месяц|месяца)', text_lower)
     if days_match:
         num = int(days_match.group(1))
         unit = days_match.group(2)
-        
         if unit in ["день", "дня", "дней"]:
             target_date = now + timedelta(days=num)
         elif unit in ["неделю", "недели"]:
@@ -179,32 +162,26 @@ def parse_date(text):
             target_date = now + timedelta(days=num*30)
         else:
             target_date = now + timedelta(days=num)
-        
         if target_hour is not None:
             return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "на следующей неделе" / "на этой неделе"
     if "неделе" in text_lower or "неделю" in text_lower:
         if "следующ" in text_lower:
-            # Следующая неделя (+7 дней от текущего понедельника)
             days_until_monday = (7 - now.weekday()) % 7
             if days_until_monday == 0:
                 days_until_monday = 7
             target_date = now + timedelta(days=days_until_monday)
         else:
-            # Эта неделя (ближайший понедельник)
             days_until_monday = (7 - now.weekday()) % 7
             if days_until_monday == 0:
-                target_date = now  # Сегодня понедельник
+                target_date = now
             else:
                 target_date = now + timedelta(days=days_until_monday)
-        
         if target_hour is not None:
             return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # "на следующей неделе во вторник" / "в пятницу на следующей неделе"
     weekdays = {
         'понедельник': 0, 'пон': 0, 'пн': 0,
         'вторник': 1, 'вт': 1, 'втор': 1,
@@ -218,49 +195,39 @@ def parse_date(text):
     for day_name, weekday_num in weekdays.items():
         if day_name in text_lower:
             if "следующ" in text_lower:
-                # Следующая неделя
                 days_until = (weekday_num - now.weekday()) % 7
-                if days_until <= 3:  # Если это на этой неделе, то берём следующую
+                if days_until <= 3:
                     days_until += 7
             else:
-                # Ближайший такой день
                 days_until = (weekday_num - now.weekday()) % 7
                 if days_until == 0:
-                    days_until = 7  # Если сегодня этот день, то следующая неделя
-            
+                    days_until = 7
             target_date = now + timedelta(days=days_until)
-            
             if target_hour is not None:
                 return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
             return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # 4. ФОРМАТЫ ДАТ: 29.04.2025, 29.04, 29/04/2025
+    # Форматы дат: 29.04.2025, 29.04
     date_match = re.search(r'(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?', text_lower)
     if date_match:
         day = int(date_match.group(1))
         month = int(date_match.group(2))
         year = int(date_match.group(3)) if date_match.group(3) else now.year
-        
-        # Если год двузначный
         if year < 100:
             year = 2000 + year if year < 50 else 1900 + year
-        
         try:
             target_date = datetime(year, month, day, tzinfo=tz)
             if target_hour is not None:
                 target_date = target_date.replace(hour=target_hour, minute=target_minute)
             else:
                 target_date = target_date.replace(hour=23, minute=59)
-            
-            # Если дата в прошлом, считаем что это следующий год
             if target_date < now:
                 target_date = target_date.replace(year=now.year + 1)
-            
             return target_date
         except ValueError:
-            pass  # Некорректная дата, пробуем дальше
+            pass
     
-    # 5. МЕСЯЦА ТЕКСТОМ: "29 апреля", "1 мая 2025"
+    # Месяца текстом: "29 апреля"
     month_names = {
         'январ': 1, 'феврал': 2, 'март': 3, 'апрел': 4, 'мая': 5, 'май': 5,
         'июн': 6, 'июл': 7, 'август': 8, 'сентябр': 9, 'октябр': 10,
@@ -269,39 +236,34 @@ def parse_date(text):
     
     for month_str, month_num in month_names.items():
         if month_str in text_lower:
-            # Ищем день перед названием месяца
             day_match = re.search(r'(\d{1,2})\s*' + month_str, text_lower)
             if day_match:
                 day = int(day_match.group(1))
                 year = now.year
-                
                 try:
                     target_date = datetime(year, month_num, day, tzinfo=tz)
                     if target_hour is not None:
                         target_date = target_date.replace(hour=target_hour, minute=target_minute)
                     else:
                         target_date = target_date.replace(hour=23, minute=59)
-                    
                     if target_date < now:
                         target_date = target_date.replace(year=now.year + 1)
-                    
                     return target_date
                 except ValueError:
                     pass
     
-    # 6. ДНИ НЕДЕЛИ: "в понедельник", "пятница"
+    # Дни недели
     for day_name, weekday_num in weekdays.items():
         if day_name in text_lower:
             days_until = (weekday_num - now.weekday()) % 7
             if days_until == 0:
-                days_until = 7  # Если сегодня этот день, то следующая неделя
+                days_until = 7
             target_date = now + timedelta(days=days_until)
-            
             if target_hour is not None:
                 return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
             return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
     
-    # 7. ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ DATEPARSER (для сложных случаев)
+    # Dateparser фолбэк
     try:
         parsed = dateparser.parse(
             text,
@@ -319,16 +281,15 @@ def parse_date(text):
     except:
         pass
     
-    # 8. ТОЛЬКО ВРЕМЯ БЕЗ ДАТЫ (считаем что это сегодня/завтра)
+    # Только время
     if target_hour is not None:
         today_time = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
         if today_time > now:
             return today_time
         else:
-            # Время уже прошло сегодня, значит завтра
             return (now + timedelta(days=1)).replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
     
-    return None  # Не удалось распарсить
+    return None
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
@@ -336,7 +297,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
     is_edit_mode = user_edit_mode.get(user_id, False)
     user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val}
 
-    # Получаем задачи
     if filter_type == "all":
         tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
@@ -368,12 +328,10 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
     text = f"📋 {title} (всего {len(tasks)})\n\n"
     kb = []
 
-    # Кнопка режима выбора
     mode_btn_text = "✅ Обычный режим" if is_edit_mode else "✏️ Режим выбора"
     kb.append([InlineKeyboardButton(text=mode_btn_text, callback_data="toggle_mode")])
 
     for t in tasks[:20]:
-        # Иконка: ✅ если выполнено, иначе приоритет
         if t.is_done:
             icon = "✅"
         else:
@@ -424,16 +382,7 @@ async def filter_importance(message):
 async def filter_period(message):
     await show_task_list(message, message.text, "period", message.text)
 
-# ================= ДОБАВЛЕНИЕ =================
-@dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
-    "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад",
-    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
-    "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
-])
-from services.ai_parser import parse_task_with_ai  # Добавь в начало файла
-
-# ... (весь код до handle_text остается) ...
-
+# ================= ДОБАВЛЕНИЕ ЗАДАЧ =================
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
     "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад",
     "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
@@ -449,20 +398,16 @@ async def handle_text(message):
         # AI успешно распарсил
         title = ai_result.get("title", text)
         priority = ai_result.get("priority", "none")
-        due_str = ai_result.get("due_at")
-        
-        # Парсим дату из ISO формата
-        due_at = None
-        if due_str:
-            try:
-                due_at = datetime.fromisoformat(due_str)
-            except:
-                due_at = parse_date(text)  # Фолбэк на старый парсер
+        due_at = ai_result.get("due_at")  # Уже naive благодаря ai_parser.py
     else:
         # AI не сработал — используем старый код
         priority = parse_priority(text)
         due_at = parse_date(text)
         title = clean_title(text)
+
+    # ✅ Финальная страховка: убираем tzinfo если вдруг осталось
+    if due_at and hasattr(due_at, 'tzinfo') and due_at.tzinfo is not None:
+        due_at = due_at.replace(tzinfo=None)
 
     # Создаем задачу
     task = await task_service.create_task(title, due_at, priority)
