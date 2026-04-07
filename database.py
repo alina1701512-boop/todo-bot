@@ -37,3 +37,16 @@ async def reset_database():
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     logger.info("🗑 Database reset complete")
+
+async def migrate_add_user_id():
+    """Добавляет поле user_id в таблицу tasks, если его нет."""
+    from sqlalchemy import text
+    try:
+        async with async_session() as session:
+            await session.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR"))
+            await session.commit()
+            logger.info("✅ Migration: Added user_id column to tasks table")
+    except Exception as e:
+        logger.info(f"ℹ️ Migration: user_id column likely already exists ({e})")
+        async with async_session() as session:
+            await session.rollback()
