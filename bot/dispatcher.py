@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
-from services.ai_parser import parse_task_with_ai, make_naive
+from services.ai_parser import parse_task_with_ai
 
 logger = logging.getLogger(__name__)
 user_context = {}
@@ -90,11 +90,13 @@ def parse_date(text):
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
     user_id = message.from_user.id
-    # 🔒 Сохраняем контекст
+    
+    # 🔒 Сохраняем контекст (ОДИНАКОВО для всех вкладок)
     user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val}
 
     # Загрузка задач
-    if filter_type == "all": tasks = await task_service.get_all_tasks()
+    if filter_type == "all": 
+        tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
         tasks = [t for t in all_t if t.priority == filter_val]
@@ -108,7 +110,8 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: tasks = []
-    else: tasks = []
+    else: 
+        tasks = []
 
     if not tasks:
         text = "📋 Задач нет"
@@ -121,7 +124,9 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
 
     text = f"📋 {title} (всего {len(tasks)})\n\n"
     kb = []
+    
     for t in tasks[:20]:
+        # ✅ ВИЗУАЛ: Галочка или Приоритет
         icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
@@ -133,30 +138,45 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
         else: await message.answer(text, reply_markup=markup)
     except TelegramBadRequest: pass
 
-# ================= ОБРАБОТЧИКИ МЕНЮ =================
+# ================= ОБРАБОТЧИКИ МЕНЮ (ОДИНАКОВАЯ СТРУКТУРА) =================
 @dp.message(Command("start"))
 async def cmd_start(message): await message.answer("👋 Привет! Я твой планировщик.", reply_markup=get_main_menu_keyboard())
+
 @dp.message(lambda m: m.text == "🔙 Назад")
 async def go_back(message): await message.answer("🔙 Главное меню:", reply_markup=get_main_menu_keyboard())
+
 @dp.message(lambda m: m.text == "🔥 Важность")
 async def priority_menu(message): await message.answer("🔥 Выбери важность:", reply_markup=get_priority_menu_keyboard())
+
 @dp.message(lambda m: m.text == "📅 Период")
 async def period_menu(message): await message.answer("📅 Выбери период:", reply_markup=get_period_menu_keyboard())
 
+# 🟢 "Все задачи" — ТОЧНО КАК "Важность"
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
-    user_context[message.from_user.id] = {"title": "Все задачи", "type": "all", "val": None}
+    uid = message.from_user.id
+    # 1. Сохраняем контекст
+    user_context[uid] = {"title": "Все задачи", "type": "all", "val": None}
+    # 2. Показываем список
     await show_task_list(message, "Все задачи", "all", None)
 
+# 🟡 "Важность" — эталон, который работает
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
 async def filter_importance(message):
+    uid = message.from_user.id
     p_map = {"🔴 Срочные": "red", "🟡 Средние": "yellow", "🟢 Лайтовые": "green"}
-    user_context[message.from_user.id] = {"title": message.text, "type": "priority", "val": p_map[message.text]}
+    # 1. Сохраняем контекст
+    user_context[uid] = {"title": message.text, "type": "priority", "val": p_map[message.text]}
+    # 2. Показываем список
     await show_task_list(message, message.text, "priority", p_map[message.text])
 
+# 🔵 "Период" — тоже одинаково
 @dp.message(lambda m: m.text in ["Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"])
 async def filter_period(message):
-    user_context[message.from_user.id] = {"title": message.text, "type": "period", "val": message.text}
+    uid = message.from_user.id
+    # 1. Сохраняем контекст
+    user_context[uid] = {"title": message.text, "type": "period", "val": message.text}
+    # 2. Показываем список
     await show_task_list(message, message.text, "period", message.text)
 
 # ================= ДОБАВЛЕНИЕ =================
@@ -185,6 +205,7 @@ async def handle_text(message):
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
     
+    # Обновляем текущий список
     ctx = user_context.get(message.from_user.id)
     if ctx:
         class FakeMsg:
@@ -206,18 +227,22 @@ async def handle_task_click(callback: types.CallbackQuery):
     
     # 1. Меняем статус в БД
     task = await task_service.get_task_by_id(tid)
-    if task: await task_service.update_task(tid, is_done=not task.is_done)
+    if task: 
+        await task_service.update_task(tid, is_done=not task.is_done)
     
-    # 2. Берём контекст
-    ctx = user_context.get(uid, {"title": "Все задачи", "type": "all", "val": None})
+    # 2. Берём контекст (ОДИНАКОВО для всех вкладок)
+    ctx = user_context.get(uid)
     
-    # 3. Обновляем экран
-    try:
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
-    except: pass
+    # 3. Обновляем экран через edit_text
+    if ctx:
+        try:
+            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
+        except Exception as e:
+            logger.warning(f"Edit failed: {e}")
     
-    # 4. Тихий ответ (без всплывашек)
+    # 4. Тихий ответ
     await callback.answer("")
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
-async def noop(callback): await callback.answer("Задача уже выполнена", show_alert=False)
+async def noop(callback): 
+    await callback.answer("Задача уже выполнена", show_alert=False)
