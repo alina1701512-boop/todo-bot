@@ -30,15 +30,8 @@ async def startup():
     logger.info(f"📍 APP_HOST: {APP_HOST}")
     
     try:
-        await init_db()
+        await init_db()  # ✅ Здесь добавятся колонки
         logger.info("✅ Database initialized")
-        
-        # ⚠️ СБРОС БАЗЫ ДАННЫХ (ТОЛЬКО ОДИН РАЗ!)
-        # Нужно, чтобы добавились колонки created_at и is_archived
-        from database import reset_database
-        await reset_database()
-        logger.info("🗑 Database reset complete - columns added!")
-        
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
@@ -51,8 +44,6 @@ async def startup():
         logger.error(f"❌ Telegram webhook error: {e}")
 
     # ⏰ ПЛАНИРОВЩИК
-    
-    # 1. Очистка старых задач: Каждый день в 00:00 по Москве
     scheduler.add_job(
         task_service.cleanup_old_tasks, 
         "cron", hour=0, minute=0, 
@@ -61,9 +52,7 @@ async def startup():
         replace_existing=True
     )
     
-    # 2. Проверка напоминаний (каждые 5 мин)
-    async def check_reminders(): pass # Заглушка
-    
+    async def check_reminders(): pass
     scheduler.add_job(check_reminders, "interval", minutes=5, id="check_reminders", replace_existing=True)
     
     scheduler.start()
@@ -94,7 +83,6 @@ async def root():
 async def health():
     return {"status": "running", "db": "ok"}
 
-# ... (остальной код Google Auth можно оставить, если нужен)
 @app.get("/auth/login")
 async def auth_login(): return {"status": "auth"}
 @app.get("/auth/callback")
