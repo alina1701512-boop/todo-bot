@@ -1,6 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import declarative_base
-from datetime import datetime
 
 Base = declarative_base()
 
@@ -14,7 +13,4 @@ class Task(Base):
     priority = Column(String, default="none")
     repeat_rule = Column(String, default="none")
     is_reminded = Column(Boolean, default=False)
-    
-    # Новые поля
-    created_at = Column(DateTime, default=datetime.utcnow)
-    is_archived = Column(Boolean, default=False)
+    # ❌ Временно убрали: created_at, is_archived
