@@ -11,13 +11,14 @@ from services import task_service
 from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
 
 logger = logging.getLogger(__name__)
-user_context = {}  # Хранит: offset, title, type, val, ai_mode
+user_context = {}
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
 ITEMS_PER_PAGE = 8
 
+# ================= КЛАВИАТУРЫ =================
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📋 Все задачи")],
@@ -38,6 +39,7 @@ def get_period_menu_keyboard():
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
+# ================= УТИЛИТЫ =================
 def parse_priority(text):
     t = text.lower()
     if any(w in t for w in ["красный", "срочно", "важно", "горит", "срочн", "критич"]): return "red"
@@ -80,19 +82,27 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
+# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    if filter_type == "all": all_tasks = await task_service.get_all_tasks()
+    uid_str = str(user_id)  # 🔥 Приводим к строке для БД
+    
+    # Загрузка задач С ФИЛЬТРОМ ПО user_id
+    if filter_type == "all": 
+        all_tasks = await task_service.get_all_tasks(user_id=uid_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
+        all_t = await task_service.get_all_tasks(user_id=uid_str)
         all_tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
-        if filter_val == "Сегодня": all_tasks = await task_service.get_tasks_for_date(now.date())
-        elif filter_val == "Завтра": all_tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
-        elif filter_val == "📆 Неделя": all_tasks = await task_service.get_tasks_for_week(now.date())
+        if filter_val == "Сегодня": 
+            all_tasks = await task_service.get_tasks_for_date(now.date(), user_id=uid_str)
+        elif filter_val == "Завтра": 
+            all_tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=uid_str)
+        elif filter_val == "📆 Неделя": 
+            all_tasks = await task_service.get_tasks_for_week(now.date(), user_id=uid_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=uid_str)
             end = now.date() + timedelta(days=30)
             all_tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: all_tasks = []
@@ -139,7 +149,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     except TelegramBadRequest as e:
         logger.error(f"❌ Edit failed: {e}")
 
-# ================= ОБРАБОТЧИКИ =================
+# ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
 async def cmd_start(message): 
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
@@ -176,7 +186,7 @@ async def filter_period(message):
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await show_task_list(message, message.text, "period", message.text, page_offset=0)
 
-# 🤖 ВХОД В РЕЖИМ AI
+# 🤖 AI ЧАТ
 @dp.message(lambda m: m.text == "🤖 AI Чат")
 async def enter_ai_mode(message):
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = True
@@ -189,17 +199,16 @@ async def enter_ai_mode(message):
 ])
 async def handle_text(message):
     uid = message.from_user.id
+    uid_str = str(uid)  # 🔥 Для БД
     state = user_context.setdefault(uid, {})
     text = message.text.strip()
 
-    # 🔥 УМНЫЙ МАРШРУТ: AI-режим ИЛИ знак вопроса в конце
     if state.get("ai_mode") or text.endswith("?"):
         await message.answer("🤖 Думаю...")
         reply = await chat_with_ai(text)
         await message.answer(reply or "❌ Не удалось получить ответ.")
         return
 
-    # 📦 СОЗДАНИЕ ЗАДАЧИ
     ai_result = await parse_task_with_ai(text)
     if ai_result and ai_result.get("title"):
         title = ai_result.get("title")
@@ -213,7 +222,8 @@ async def handle_text(message):
     if due_at and hasattr(due_at, 'tzinfo') and due_at.tzinfo is not None:
         due_at = due_at.replace(tzinfo=None)
 
-    task = await task_service.create_task(title, due_at, priority)
+    # 🔥 Создаём задачу с user_id
+    task = await task_service.create_task(title, due_at, priority, user_id=uid_str)
     emoji = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(priority, "⚪️")
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
     
@@ -222,6 +232,28 @@ async def handle_text(message):
     ctx = user_context.get(uid)
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
+
+# ================= 📊 СТАТИСТИКА /stats =================
+@dp.message(Command("stats"))
+async def show_stats(message: types.Message):
+    uid_str = str(message.from_user.id)
+    await message.answer("📊 **Готовлю статистику...**")
+    
+    stats = await task_service.get_task_stats(user_id=uid_str)
+    completion = (stats['done'] / stats['total'] * 100) if stats['total'] > 0 else 0
+    
+    text = (f"📊 **Твоя статистика:**\n\n"
+            f"📦 **Всего задач:** {stats['total']}\n"
+            f"✅ **Выполнено:** {stats['done']}\n"
+            f"⏳ **В работе:** {stats['pending']}\n"
+            f"🔴 **Просрочено:** {stats['overdue']}\n\n"
+            f"📈 **Прогресс:** {completion:.1f}%\n\n"
+            f"**По приоритетам:**\n"
+            f"🔴 Срочные: {stats['red']}\n"
+            f"🟡 Средние: {stats['yellow']}\n"
+            f"🟢 Лайтовые: {stats['green']}\n")
+    
+    await message.answer(text, parse_mode="Markdown")
 
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
