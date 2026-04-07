@@ -255,6 +255,46 @@ async def show_stats(message: types.Message):
     
     await message.answer(text, parse_mode="Markdown")
 
+# ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
+@dp.message(lambda m: m.voice)
+async def handle_voice(message: types.Message):
+    """Принимает голосовые сообщения, распознаёт и создаёт задачу."""
+    uid = message.from_user.id
+    await message.answer("🎧 Слушаю...")
+    
+    try:
+        # 1. Получаем информацию о файле
+        file = await bot.get_file(message.voice.file_id)
+        file_path = file.file_path
+        
+        # 2. Скачиваем файл с серверов Telegram
+        async with httpx.AsyncClient() as client:
+            download_url = f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}"
+            response = await client.get(download_url, timeout=30.0)
+            audio_bytes = response.content
+        
+        # 3. Отправляем в Whisper для распознавания
+        from services.ai_parser import transcribe_voice
+        text = await transcribe_voice(audio_bytes)
+        
+        if text:
+            # 4. Имитируем текстовое сообщение и передаём в handle_text
+            # Создаём "фейковое" сообщение с распознанным текстом
+            fake_message = types.Message(
+                message_id=message.message_id,
+                from_user=message.from_user,
+                date=message.date,
+                chat=message.chat,
+                text=text
+            )
+            await handle_text(fake_message)
+        else:
+            await message.answer("❌ Не удалось распознать речь. Попробуйте ещё раз или напишите текстом.")
+            
+    except Exception as e:
+        logger.error(f"❌ Voice handler error: {e}")
+        await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
+        
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
