@@ -4,6 +4,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.exceptions import TelegramBadRequest
 import re
 import logging
+import httpx  # ← Добавить сюда, рядом с другими импортами
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
