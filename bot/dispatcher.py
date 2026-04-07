@@ -89,18 +89,18 @@ def parse_date(text):
     if "в конце месяца" in text_lower:
         t = datetime(now.year, now.month + 1 if now.month < 12 else 1, 1, tzinfo=tz) - timedelta(days=3)
         return t.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
-    
     return None
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
     user_id = message.from_user.id
     
-    # ✅ ЖЕЛЕЗОБЕТОННОЕ СОХРАНЕНИЕ КОНТЕКСТА
+    # 🔒 ФИКСАЦИЯ КОНТЕКСТА: всегда сохраняем текущее состояние фильтра
     user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val}
     
-    # Запрашиваем задачи
-    if filter_type == "all": tasks = await task_service.get_all_tasks()
+    # Запрос задач из БД
+    if filter_type == "all": 
+        tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
         tasks = [t for t in all_t if t.priority == filter_val]
@@ -114,7 +114,8 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: tasks = []
-    else: tasks = []
+    else: 
+        tasks = []
 
     if not tasks:
         text = "📋 Задач нет"
@@ -128,26 +129,18 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
     text = f"📋 {title} (всего {len(tasks)})\n\n"
     kb = []
     
-    # Кнопка режима выбора (пока не используем активно, но оставляем)
-    mode_btn_text = "✅ Обычный режим" if user_edit_mode.get(user_id, False) else "✏️ Режим выбора"
-    kb.append([InlineKeyboardButton(text=mode_btn_text, callback_data="toggle_mode")])
-
-    # Отрисовка кнопок задач
     for t in tasks[:20]:
-        # ✅ Если выполнено - зеленая галочка, иначе приоритет
+        # ✅ ВИЗУАЛ: Галочка или Приоритет
         icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         
-        # Callback для клика по задаче
         kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=f"task_{t.id}")])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     try:
-        if is_edit: 
-            await message.edit_text(text, reply_markup=markup)
-        else: 
-            await message.answer(text, reply_markup=markup)
+        if is_edit: await message.edit_text(text, reply_markup=markup)
+        else: await message.answer(text, reply_markup=markup)
     except TelegramBadRequest: pass
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
@@ -163,10 +156,10 @@ async def priority_menu(message): await message.answer("🔥 Выбери важ
 @dp.message(lambda m: m.text == "📅 Период")
 async def period_menu(message): await message.answer("📅 Выбери период:", reply_markup=get_period_menu_keyboard())
 
+# 🟢 ЯВНАЯ ФИКСАЦИЯ КОНТЕКСТА ДЛЯ "ВСЕ ЗАДАЧИ"
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
     uid = message.from_user.id
-    # ✅ ЯВНОЕ СОХРАНЕНИЕ КОНТЕКСТА ПЕРЕД ОТРИСОВКОЙ
     user_context[uid] = {"title": "Все задачи", "type": "all", "val": None}
     await show_task_list(message, "Все задачи", "all", None)
 
@@ -174,14 +167,12 @@ async def all_tasks(message):
 async def filter_importance(message):
     uid = message.from_user.id
     p_map = {"🔴 Срочные": "red", "🟡 Средние": "yellow", "🟢 Лайтовые": "green"}
-    # ✅ ЯВНОЕ СОХРАНЕНИЕ КОНТЕКСТА
     user_context[uid] = {"title": message.text, "type": "priority", "val": p_map[message.text]}
     await show_task_list(message, message.text, "priority", p_map[message.text])
 
 @dp.message(lambda m: m.text in ["Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"])
 async def filter_period(message):
     uid = message.from_user.id
-    # ✅ ЯВНОЕ СОХРАНЕНИЕ КОНТЕКСТА
     user_context[uid] = {"title": message.text, "type": "period", "val": message.text}
     await show_task_list(message, message.text, "period", message.text)
 
@@ -218,20 +209,10 @@ async def handle_text(message):
         class FakeMessage:
             def __init__(self, user_id): 
                 self.from_user = types.User(id=user_id, is_bot=False, first_name="User")
-            async def answer(self, text, reply_markup=None): 
-                pass
+            async def answer(self, text, reply_markup=None): pass
         await show_task_list(FakeMessage(message.from_user.id), ctx["title"], ctx["type"], ctx["val"], is_edit=False)
 
-# ================= КОЛБЭККИ (ОБНОВЛЕНИЕ КНОПОК) =================
-@dp.callback_query(lambda c: c.data == "toggle_mode")
-async def toggle_mode(callback):
-    uid = callback.from_user.id
-    user_edit_mode[uid] = not user_edit_mode.get(uid, False)
-    ctx = user_context.get(uid)
-    if ctx:
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
-    await callback.answer()
-
+# ================= КОЛБЭККИ (УНИВЕРСАЛЬНОЕ ОБНОВЛЕНИЕ) =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
@@ -244,7 +225,7 @@ async def handle_task_click(callback: types.CallbackQuery):
     uid = callback.from_user.id
     tid = int(callback.data.split("_")[1])
     
-    # 1. Переключаем статус задачи в БД
+    # 1. Переключаем статус в БД
     task = await task_service.get_task_by_id(tid)
     if task:
         new_status = not task.is_done
@@ -253,14 +234,15 @@ async def handle_task_click(callback: types.CallbackQuery):
     else:
         msg = "Задача не найдена"
     
-    # 2. Тихий ответ
+    # 2. Тихий ответ (без всплывающего окна)
     await callback.answer(msg, show_alert=False)
     
-    # 3. ✅ ПЕРЕЗАГРУЖАЕМ СПИСОК СТРОГО ПО КОНТЕКСТУ
-    ctx = user_context.get(uid, {"title": "Все задачи", "type": "all", "val": None})
-    
+    # 3. 🔒 ПРИНУДИТЕЛЬНОЕ ОБНОВЛЕНИЕ СПИСКА ПО СОХРАНЕННОМУ ФИЛЬРУ
+    ctx = user_context.get(uid)
+    if not ctx:
+        ctx = {"title": "Все задачи", "type": "all", "val": None}
+        
     tasks = []
-    # Перезапрашиваем данные в зависимости от того, где мы находимся
     if ctx["type"] == "all":
         tasks = await task_service.get_all_tasks()
     elif ctx["type"] == "priority":
@@ -278,12 +260,12 @@ async def handle_task_click(callback: types.CallbackQuery):
         else: tasks = []
     else:
         tasks = await task_service.get_all_tasks()
-    
-    # 4. Обновляем сообщение (edit_text)
+
+    # 4. Мгновенная перерисовка кнопок
     try:
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
     except Exception as e:
-        logger.warning(f"Edit failed: {e}")
+        logger.warning(f"Update failed: {e}")
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
 async def noop(callback):
