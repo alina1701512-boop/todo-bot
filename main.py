@@ -13,7 +13,7 @@ from database import init_db
 from config import TG_TOKEN, APP_HOST, TZ
 from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from services import task_service  # ✅ Импорт для доступа к cleanup_old_tasks
+from services import task_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ app = FastAPI()
 scheduler = AsyncIOScheduler()
 
 # =============================================================================
-# 📦 ФУНКЦИИ НАПОМИНАНИЙ (заглушки, можно раскомментировать позже)
+# 📦 ФУНКЦИИ НАПОМИНАНИЙ (заглушки)
 # =============================================================================
 async def send_daily_summary():
     pass
@@ -46,6 +46,14 @@ async def startup():
     try:
         await init_db()
         logger.info("✅ Database initialized")
+        
+        # === ⚠️ РАСКОММЕНТИРОВАНО ДЛЯ СБРОСА БД (ТОЛЬКО ОДИН РАЗ!) ===
+        # После первого успешного деплоя ЗАКОММЕНТИРУЙТЕ эти 3 строки обратно!
+        from database import reset_database
+        await reset_database()
+        logger.info("🗑 Database reset - new columns added!")
+        # ================================================================
+        
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
@@ -57,15 +65,10 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # ⚙️ НАСТРОЙКА ПЛАНИРОВЩИКА (SCHEDULER)
-    # 1. Проверка напоминаний каждые 5 минут
+    # ⚙️ НАСТРОЙКА ПЛАНИРОВЩИКА
     scheduler.add_job(check_reminders, "interval", minutes=5, id="check_reminders", replace_existing=True)
-    
-    # 2. ЕЖЕДНЕВНАЯ ОЧИСТКА И ПЕРЕНОС ЗАДАЧ в 00:05
-    # Автоматически переносит просроченные на завтра, архивирует старые (>30 дней)
     scheduler.add_job(task_service.cleanup_old_tasks, "cron", hour=0, minute=5, id="daily_cleanup", timezone=TZ, replace_existing=True)
     
-    # Запускаем планировщик
     scheduler.start()
     logger.info("⏰ Scheduler started: reminders + daily cleanup")
 
