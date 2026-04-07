@@ -197,22 +197,22 @@ async def chat_with_ai_handler(message: types.Message):
 ])
 async def handle_text(message):
     text = message.text.strip()
+    logger.info(f"📝 Received: '{text}'")
     
-    # 🔥 ПЫТАЕМСЯ ЧЕРЕЗ AI
+    # 🔥 Пытаемся через AI
     ai_result = await parse_task_with_ai(text)
     
     if ai_result and ai_result.get("title"):
-        # AI успешно распарсил
+        logger.info(f"🤖 AI Success: {ai_result}")
         title = ai_result.get("title")
         priority = ai_result.get("priority", "none")
         due_at = ai_result.get("due_at")
     else:
-        # 🔁 ФОЛБЭК на локальный парсер
+        logger.info("🔄 Falling back to local parser")
         priority = parse_priority(text)
         due_at = parse_date(text)
         title = clean_title(text)
 
-    # Убираем tzinfo для совместимости с БД
     if due_at and hasattr(due_at, 'tzinfo') and due_at.tzinfo is not None:
         due_at = due_at.replace(tzinfo=None)
 
@@ -222,7 +222,6 @@ async def handle_text(message):
     
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
     
-    # Обновляем список
     ctx = user_context.get(message.from_user.id)
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
