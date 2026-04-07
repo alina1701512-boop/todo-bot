@@ -430,30 +430,58 @@ async def filter_period(message):
     "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
     "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
 ])
+from services.ai_parser import parse_task_with_ai  # Добавь в начало файла
+
+# ... (весь код до handle_text остается) ...
+
+@dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
+    "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад",
+    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
+    "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
+])
 async def handle_text(message):
     text = message.text.strip()
-    priority = parse_priority(text)
-    repeat = parse_repeat(text)
-    clean = clean_title(text)
-    due_at = parse_date(text)
     
-    task = await task_service.create_task(clean, due_at, priority, repeat)
+    # 🤖 Пытаемся использовать AI
+    ai_result = await parse_task_with_ai(text)
     
+    if ai_result:
+        # AI успешно распарсил
+        title = ai_result.get("title", text)
+        priority = ai_result.get("priority", "none")
+        due_str = ai_result.get("due_at")
+        
+        # Парсим дату из ISO формата
+        due_at = None
+        if due_str:
+            try:
+                due_at = datetime.fromisoformat(due_str)
+            except:
+                due_at = parse_date(text)  # Фолбэк на старый парсер
+    else:
+        # AI не сработал — используем старый код
+        priority = parse_priority(text)
+        due_at = parse_date(text)
+        title = clean_title(text)
+
+    # Создаем задачу
+    task = await task_service.create_task(title, due_at, priority)
+    
+    # Ответ
     emoji = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(priority, "⚪️")
-    due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
+    due_str_display = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
     
-    await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
+    await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str_display}")
     
-    # ✅ ОБНОВЛЯЕМ ТЕКУЩИЙ СПИСОК
+    # Обновляем список
     ctx = user_context.get(message.from_user.id)
     if ctx:
         class FakeMessage:
-            def __init__(self, user_id):
+            def __init__(self, user_id): 
                 self.from_user = types.User(id=user_id, is_bot=False, first_name="User")
-            async def answer(self, text, reply_markup=None):
+            async def answer(self, text, reply_markup=None): 
                 pass
-        fake_msg = FakeMessage(message.from_user.id)
-        await show_task_list(fake_msg, ctx["title"], ctx["type"], ctx["val"], is_edit=False)
+        await show_task_list(FakeMessage(message.from_user.id), ctx["title"], ctx["type"], ctx["val"], is_edit=False)
 
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "toggle_mode")
