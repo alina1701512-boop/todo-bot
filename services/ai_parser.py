@@ -102,7 +102,7 @@ async def transcribe_voice(audio_bytes: bytes) -> str:
     
     # Формируем multipart/form-data запрос
     data = {
-        "model": "distil-whisper-large-v3-en",  # Поддерживает русский!
+       "model": "whisper-large-v3-turbo",  # ← Актуальная ✅
         "language": "ru",  # Явно указываем русский для точности
     }
     
