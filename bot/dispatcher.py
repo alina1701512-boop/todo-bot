@@ -90,13 +90,14 @@ def parse_date(text):
         t = datetime(now.year, now.month + 1 if now.month < 12 else 1, 1, tzinfo=tz) - timedelta(days=3)
         return t.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
     
-    # Остальные правила упрощены для компактности, AI теперь основной парсер
     return None
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
     user_id = message.from_user.id
     is_edit_mode = user_edit_mode.get(user_id, False)
+    
+    # 🔒 Сохраняем контекст
     user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val}
 
     if filter_type == "all": tasks = await task_service.get_all_tasks()
@@ -130,7 +131,12 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
     kb.append([InlineKeyboardButton(text=mode_btn_text, callback_data="toggle_mode")])
 
     for t in tasks[:20]:
-        icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+        # ✅ ГЛАВНОЕ ИЗМЕНЕНИЕ: если выполнено - показываем ✅, иначе приоритет
+        if t.is_done:
+            icon = "✅"  # Зеленая галочка для выполненных
+        else:
+            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+            
         short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=f"task_{t.id}")])
@@ -144,20 +150,34 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
 async def cmd_start(message): await message.answer("👋 Привет! Я твой AI-планировщик.", reply_markup=get_main_menu_keyboard())
+
 @dp.message(lambda m: m.text == "🔙 Назад")
 async def go_back(message): await message.answer("🔙 Главное меню:", reply_markup=get_main_menu_keyboard())
+
 @dp.message(lambda m: m.text == "🔥 Важность")
 async def priority_menu(message): await message.answer("🔥 Выбери важность:", reply_markup=get_priority_menu_keyboard())
+
 @dp.message(lambda m: m.text == "📅 Период")
 async def period_menu(message): await message.answer("📅 Выбери период:", reply_markup=get_period_menu_keyboard())
+
 @dp.message(lambda m: m.text == "📋 Все задачи")
-async def all_tasks(message): await show_task_list(message, "Все задачи", "all", None)
+async def all_tasks(message):
+    uid = message.from_user.id
+    user_context[uid] = {"title": "Все задачи", "type": "all", "val": None}
+    await show_task_list(message, "Все задачи", "all", None)
+
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
 async def filter_importance(message):
+    uid = message.from_user.id
     p_map = {"🔴 Срочные": "red", "🟡 Средние": "yellow", "🟢 Лайтовые": "green"}
+    user_context[uid] = {"title": message.text, "type": "priority", "val": p_map[message.text]}
     await show_task_list(message, message.text, "priority", p_map[message.text])
+
 @dp.message(lambda m: m.text in ["Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"])
-async def filter_period(message): await show_task_list(message, message.text, "period", message.text)
+async def filter_period(message):
+    uid = message.from_user.id
+    user_context[uid] = {"title": message.text, "type": "period", "val": message.text}
+    await show_task_list(message, message.text, "period", message.text)
 
 # ================= AI ЧАТ =================
 @dp.message(lambda m: m.text == "🤖 AI Чат" or m.text.startswith("/ai "))
@@ -167,14 +187,14 @@ async def chat_with_ai_handler(message: types.Message):
         await message.answer("✏️ Напиши вопрос после /ai\nНапример: /ai Придумай 3 идеи для ужина")
         return
     
-    await message.answer_chat_action("typing")
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     reply = await chat_with_ai(user_text)
     await message.answer(reply or "❌ Не удалось получить ответ. Попробуй позже.")
 
 # ================= СТАТИСТИКА =================
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
-    await message.answer_chat_action("typing")
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     stats = await task_service.get_task_stats()
     text = (f"📊 **Твоя статистика:**\n\n"
             f"📦 Всего задач: {stats['total']}\n"
@@ -185,7 +205,7 @@ async def show_stats(message: types.Message):
             f"🔴 Срочные: {stats['red']} | 🟡 Средние: {stats['yellow']} | 🟢 Лайтовые: {stats['green']}")
     await message.answer(text, parse_mode="Markdown")
 
-# ================= ДОБАВЛЕНИЕ ЗАДАЧ (С AI-ПОМОЩНИКОМ) =================
+# ================= ДОБАВЛЕНИЕ ЗАДАЧ =================
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
     "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад", "🤖 AI Чат",
     "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые", "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
@@ -212,7 +232,7 @@ async def handle_text(message):
     
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
     
-    # 🤖 AI-ПОМОЩНИК: даёт совет сразу после создания
+    # 🤖 AI-совет
     tips = await get_task_tips(task.title, due_str, priority)
     if tips:
         await message.answer(f"💡 **AI совет:** {tips}", parse_mode="Markdown")
@@ -240,16 +260,27 @@ async def refresh_list(callback):
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_"))
-async def handle_task_click(callback):
+async def handle_task_click(callback: types.CallbackQuery):
     uid = callback.from_user.id
     tid = int(callback.data.split("_")[1])
+    
+    # 1. Переключаем статус
     task = await task_service.get_task_by_id(tid)
     if task:
         new_status = not task.is_done
         await task_service.update_task(tid, is_done=new_status)
-        await callback.answer("✅ Выполнено!" if new_status else "↩️ Снято", show_alert=False)
+    
+    # 2. ✅ ТИХИЙ ОТВЕТ (без всплывающего уведомления)
+    await callback.answer("")
+    
+    # 3. Обновляем список
     ctx = user_context.get(uid)
-    if ctx: await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
+    if ctx:
+        try:
+            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
+        except Exception as e:
+            logger.warning(f"Edit failed: {e}")
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
-async def noop(callback): await callback.answer("Задача уже выполнена", show_alert=False)
+async def noop(callback): 
+    await callback.answer("Задача уже выполнена", show_alert=False)
