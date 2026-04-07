@@ -219,24 +219,57 @@ async def refresh_list(callback):
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_"))
-async def handle_task_click(callback):
+async def handle_task_click(callback: types.CallbackQuery):
     uid = callback.from_user.id
     tid = int(callback.data.split("_")[1])
     
-    # ✅ ПЕРЕКЛЮЧАЕМ СТАТУС (вкл/выкл) - СТАРАЯ РАБОЧАЯ ВЕРСИЯ
+    # 1. Переключаем статус задачи
     task = await task_service.get_task_by_id(tid)
     if task:
         new_status = not task.is_done
         await task_service.update_task(tid, is_done=new_status)
-        
-        if new_status:
-            await callback.answer("✅ Выполнено!", show_alert=False)
-        else:
-            await callback.answer("↩️ Снято с выполнения", show_alert=False)
     
+    # 2. ✅ ОБЯЗАТЕЛЬНО обновляем сообщение (edit_text), а не просто уведомление
+    # Сначала отправляем пустой ответ, чтобы Telegram не показывал "загрузку"
+    await callback.answer("")
+    
+    # 3. Перезагружаем список ТОЧНО из того же контекста
     ctx = user_context.get(uid)
     if ctx:
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
+        # Получаем свежие задачи для этого фильтра
+        filter_type = ctx["type"]
+        filter_val = ctx["val"]
+        title = ctx["title"]
+        
+        # Перезапрашиваем данные, чтобы отобразить изменения
+        if filter_type == "all":
+            tasks = await task_service.get_all_tasks()
+        elif filter_type == "priority":
+            all_t = await task_service.get_all_tasks()
+            tasks = [t for t in all_t if t.priority == filter_val]
+        elif filter_type == "period":
+            now = datetime.now(tz)
+            if filter_val == "Сегодня": 
+                tasks = await task_service.get_tasks_for_date(now.date())
+            elif filter_val == "Завтра": 
+                tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            elif filter_val == "📆 Неделя": 
+                tasks = await task_service.get_tasks_for_week(now.date())
+            elif filter_val == "🗓️ Месяц":
+                all_t = await task_service.get_all_tasks()
+                end = now.date() + timedelta(days=30)
+                tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
+            else: 
+                tasks = []
+        else:
+            tasks = []
+        
+        # Обновляем сообщение на месте (edit_text)
+        await show_task_list(callback.message, title, filter_type, filter_val, is_edit=True)
+    else:
+        # Фолбэк: если контекст потерян, просто обновляем "Все задачи"
+        tasks = await task_service.get_all_tasks()
+        await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True)
 
 @dp.callback_query(lambda c: c.data.startswith("noop_"))
 async def noop(callback):
