@@ -18,10 +18,18 @@ def make_naive(dt: datetime) -> datetime:
     return dt
 
 async def _call_qwen(prompt: str, temperature: float = 0.1, system_prompt: str = None) -> str:
-    """Универсальный вызов Qwen с логированием"""
     if not API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set")
+        logger.error("❌ OPENROUTER_API_KEY IS MISSING!")
         return None
+    
+    # ✅ Логируем начало ключа для проверки
+    if API_KEY:
+        key_preview = API_KEY[:10] + "..." if len(API_KEY) > 10 else API_KEY
+        logger.info(f"🔑 Using API Key: {key_preview}")
+    else:
+        logger.error("🔑 API Key is empty!")
+
+    # ... остальной код
 
     messages = []
     if system_prompt:
