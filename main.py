@@ -49,9 +49,9 @@ async def startup():
         
         # === ⚠️ РАСКОММЕНТИРОВАНО ДЛЯ СБРОСА БД (ТОЛЬКО ОДИН РАЗ!) ===
         # После первого успешного деплоя ЗАКОММЕНТИРУЙТЕ эти 3 строки обратно!
-        from database import reset_database
-        await reset_database()
-        logger.info("🗑 Database reset - new columns added!")
+        # from database import reset_database
+        # await reset_database()
+        # logger.info("🗑 Database reset - new columns added!")
         # ================================================================
         
     except Exception as e:
