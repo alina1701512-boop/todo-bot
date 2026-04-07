@@ -2,13 +2,13 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.exceptions import TelegramBadRequest
-import dateparser
 import re
 import logging
 from datetime import datetime, timedelta, date
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
+from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
 
 logger = logging.getLogger(__name__)
 user_context = {}
@@ -22,7 +22,7 @@ ITEMS_PER_PAGE = 8
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📋 Все задачи")],
+        [KeyboardButton(text="📋 Все задачи"), KeyboardButton(text="🤖 AI Чат")],
         [KeyboardButton(text="🔥 Важность"), KeyboardButton(text="📅 Период")]
     ], resize_keyboard=True)
 
@@ -47,6 +47,7 @@ def parse_priority(text):
     return "none"
 
 def parse_date(text):
+    """Локальный парсер дат (фолбэк если AI не сработал)"""
     now = datetime.now(tz)
     text_lower = text.lower().strip()
     corrections = {"сегодны": "сегодня", "завтрп": "завтра", "послезавтрп": "послезавтра"}
@@ -88,11 +89,8 @@ def clean_title(text):
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    
-    # Сохраняем контекст
     user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val, "offset": page_offset}
 
-    # Загрузка задач
     if filter_type == "all": all_tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
@@ -110,7 +108,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: all_tasks = []
 
     total = len(all_tasks)
-    
     if total == 0:
         text = "📋 Задач нет"
         kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
@@ -120,7 +117,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         except: pass
         return
 
-    # Пагинация
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
     page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
@@ -135,7 +131,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
 
-    # Навигация
     nav = []
     if page_offset > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
     if page_offset + ITEMS_PER_PAGE < total: nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
@@ -150,7 +145,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
 async def cmd_start(message): 
-    await message.answer("👋 Привет! Я твой планировщик.", reply_markup=get_main_menu_keyboard())
+    await message.answer("👋 Привет! Я твой AI-планировщик.", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔙 Назад")
 async def go_back(message): 
@@ -177,18 +172,47 @@ async def filter_importance(message):
 async def filter_period(message):
     await show_task_list(message, message.text, "period", message.text, page_offset=0)
 
-# ================= ДОБАВЛЕНИЕ ЗАДАЧ =================
+# ================= 🤖 AI ЧАТ =================
+@dp.message(lambda m: m.text == "🤖 AI Чат" or m.text.startswith("/ai "))
+async def chat_with_ai_handler(message: types.Message):
+    user_text = message.text.replace("🤖 AI Чат", "").replace("/ai", "").strip()
+    
+    if not user_text:
+        await message.answer("✏️ Напиши вопрос после /ai\nНапример: /ai Придумай 3 идеи для ужина")
+        return
+    
+    await message.answer_chat_action("typing")
+    reply = await chat_with_ai(user_text)
+    
+    if reply:
+        await message.answer(reply)
+    else:
+        await message.answer("❌ Не удалось получить ответ. Проверь API ключ или попробуй позже.")
+
+# ================= ДОБАВЛЕНИЕ ЗАДАЧ (С AI-ПАРСИНГОМ + ФОЛБЭК) =================
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
-    "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад",
+    "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад", "🤖 AI Чат",
     "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
     "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
 ])
 async def handle_text(message):
     text = message.text.strip()
-    priority = parse_priority(text)
-    due_at = parse_date(text)
-    title = clean_title(text)
+    
+    # 🔥 ПЫТАЕМСЯ ЧЕРЕЗ AI
+    ai_result = await parse_task_with_ai(text)
+    
+    if ai_result and ai_result.get("title"):
+        # AI успешно распарсил
+        title = ai_result.get("title")
+        priority = ai_result.get("priority", "none")
+        due_at = ai_result.get("due_at")
+    else:
+        # 🔁 ФОЛБЭК на локальный парсер
+        priority = parse_priority(text)
+        due_at = parse_date(text)
+        title = clean_title(text)
 
+    # Убираем tzinfo для совместимости с БД
     if due_at and hasattr(due_at, 'tzinfo') and due_at.tzinfo is not None:
         due_at = due_at.replace(tzinfo=None)
 
@@ -198,7 +222,7 @@ async def handle_text(message):
     
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
     
-    # Обновляем текущий список (сброс на страницу 1)
+    # Обновляем список
     ctx = user_context.get(message.from_user.id)
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
