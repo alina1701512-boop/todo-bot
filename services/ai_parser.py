@@ -7,11 +7,10 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-API_URL = "https://openrouter.ai/api/v1/chat/completions"
-API_KEY = os.environ.get("OPENROUTER_API_KEY")
-
-# 🔥 Более стабильная бесплатная модель
-MODEL = "google/gemma-2-2b-it:free"  # или "mistralai/mistral-7b-instruct:free"
+# 🔥 Теперь используем Groq вместо OpenRouter
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
+API_KEY = os.environ.get("GROQ_API_KEY")
+MODEL = "llama-3.1-8b-instant"  # Быстрая и качественная модель
 
 tz = ZoneInfo(os.environ.get("TZ", "Europe/Moscow"))
 
@@ -20,44 +19,46 @@ def make_naive(dt: datetime) -> datetime:
         return dt.replace(tzinfo=None)
     return dt
 
-async def _call_qwen(prompt: str, temperature: float = 0.1) -> str:
+async def _call_groq(prompt: str, temperature: float = 0.1) -> str:
     if not API_KEY:
-        logger.warning("⚠️ OPENROUTER_API_KEY not set")
+        logger.warning("⚠️ GROQ_API_KEY not set")
         return None
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": os.environ.get("RENDER_EXTERNAL_URL", "http://localhost"),
-        "X-Title": "TodoBot",  # Требуется OpenRouter
     }
 
     data = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": temperature,
+        "max_tokens": 500,
     }
 
     try:
-        logger.info(f"🤖 AI Request to {MODEL}: {prompt[:100]}...")
+        logger.info(f"🤖 Groq Request: {prompt[:100]}...")
         async with httpx.AsyncClient() as client:
             response = await client.post(API_URL, json=data, headers=headers, timeout=20.0)
             
-            if response.status_code == 404:
-                logger.error(f"❌ 404 Error — проверь ключ и модель. Response: {response.text[:200]}")
+            if response.status_code == 401:
+                logger.error("❌ 401 Error — проверь GROQ_API_KEY в Render")
+                return None
+            elif response.status_code == 429:
+                logger.error("❌ 429 Error — превышен лимит запросов")
                 return None
                 
             response.raise_for_status()
             result = response.json()
             content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            logger.info(f"✅ AI Response: {content[:100]}...")
+            logger.info(f"✅ Groq Response: {content[:100]}...")
             return content.strip()
             
     except httpx.HTTPStatusError as e:
         logger.error(f"❌ HTTP Error {e.response.status_code}: {e.response.text[:200]}")
         return None
     except Exception as e:
-        logger.error(f"❌ AI Error: {type(e).__name__}: {e}")
+        logger.error(f"❌ Groq Error: {type(e).__name__}: {e}")
         return None
 
 async def parse_task_with_ai(text: str) -> dict:
@@ -82,9 +83,9 @@ async def parse_task_with_ai(text: str) -> dict:
 Верни ТОЛЬКО JSON без комментариев.
 """
     
-    content = await _call_qwen(prompt, temperature=0.1)
+    content = await _call_groq(prompt, temperature=0.1)
     if not content:
-        logger.warning("🔄 AI returned empty, falling back to local parser")
+        logger.warning("🔄 Groq returned empty, falling back to local parser")
         return None
 
     try:
@@ -114,5 +115,5 @@ async def chat_with_ai(user_text: str) -> str:
     
     system = "Ты — полезный ассистент. Отвечай кратко, по делу, на русском."
     
-    content = await _call_qwen(user_text, temperature=0.7)
+    content = await _call_groq(user_text, temperature=0.7)
     return content
