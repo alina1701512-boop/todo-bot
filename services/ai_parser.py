@@ -2,16 +2,14 @@ import httpx
 import os
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-# 🔥 Теперь используем Groq вместо OpenRouter
 API_URL = "https://api.groq.com/openai/v1/chat/completions"
 API_KEY = os.environ.get("GROQ_API_KEY")
-MODEL = "llama-3.1-8b-instant"  # Быстрая и качественная модель
-
+MODEL = "llama-3.1-8b-instant"
 tz = ZoneInfo(os.environ.get("TZ", "Europe/Moscow"))
 
 def make_naive(dt: datetime) -> datetime:
@@ -24,96 +22,64 @@ async def _call_groq(prompt: str, temperature: float = 0.1) -> str:
         logger.warning("⚠️ GROQ_API_KEY not set")
         return None
 
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    data = {
-        "model": MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": 500,
-    }
+    headers = {"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+    data = {"model": MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": 500}
 
     try:
-        logger.info(f"🤖 Groq Request: {prompt[:100]}...")
         async with httpx.AsyncClient() as client:
             response = await client.post(API_URL, json=data, headers=headers, timeout=20.0)
-            
-            if response.status_code == 401:
-                logger.error("❌ 401 Error — проверь GROQ_API_KEY в Render")
+            if response.status_code in [401, 403, 404]:
+                logger.error(f"❌ Groq Auth/Config Error: {response.status_code} {response.text[:100]}")
                 return None
-            elif response.status_code == 429:
-                logger.error("❌ 429 Error — превышен лимит запросов")
-                return None
-                
             response.raise_for_status()
-            result = response.json()
-            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            logger.info(f"✅ Groq Response: {content[:100]}...")
-            return content.strip()
-            
-    except httpx.HTTPStatusError as e:
-        logger.error(f"❌ HTTP Error {e.response.status_code}: {e.response.text[:200]}")
-        return None
+            return response.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
     except Exception as e:
-        logger.error(f"❌ Groq Error: {type(e).__name__}: {e}")
+        logger.error(f"❌ Groq Error: {e}")
         return None
 
 async def parse_task_with_ai(text: str) -> dict:
-    if not API_KEY:
-        return None
-
+    if not API_KEY: return None
     now = datetime.now(tz)
-    
-    prompt = f"""Ты — ассистент для создания задач. Текущая дата: {now.strftime('%d.%m.%Y %H:%M')}
 
-Извлеки из текста СТРОГО в формате JSON:
+    # 🔥 ДИНАМИЧЕСКИЙ ПРОМПТ С ТОЧНЫМИ ДАТАМИ
+    prompt = f"""Ты — ассистент для создания задач. ТЕКУЩАЯ ДАТА И ВРЕМЯ: {now.strftime('%Y-%m-%d %H:%M')}
+
+Извлеки из текста СТРОГО JSON:
 {{"title": "название", "priority": "red/yellow/green/none", "due_at": "YYYY-MM-DDTHH:MM:SS" или null}}
 
-Правила:
-- "красный/срочно/важно/горит" → red
-- "зеленый/легко/лайт" → green  
-- иначе → yellow
-- Если время не указано → 23:59
-- Если дата не ясна → null
+📅 ПРАВИЛА ДАТ (применяй строго):
+- "сегодня" → {now.strftime('%Y-%m-%d')}
+- "завтра" → {(now + timedelta(days=1)).strftime('%Y-%m-%d')}
+- "послезавтра" → {(now + timedelta(days=2)).strftime('%Y-%m-%d')}
+- "на днях" → {(now + timedelta(days=3)).strftime('%Y-%m-%d')}
+- "в конце месяца" → {now.replace(day=28).strftime('%Y-%m-%d')}
+- "в начале месяца" → {now.replace(day=5).strftime('%Y-%m-%d')}
+- "в середине месяца" → {now.replace(day=15).strftime('%Y-%m-%d')}
+- "через N дней" → вычисли дату от сегодня
+- Время "в HH:MM" → подставь. Иначе → 23:59.
+- Неясно → null.
+
+🎯 ПРИОРИТЕТ: красный/срочно/важно → red | зеленый/легко → green | иначе → yellow
 
 Текст: "{text}"
-Верни ТОЛЬКО JSON без комментариев.
+Верни ТОЛЬКО JSON.
 """
-    
     content = await _call_groq(prompt, temperature=0.1)
-    if not content:
-        logger.warning("🔄 Groq returned empty, falling back to local parser")
-        return None
+    if not content: return None
 
     try:
         if "```" in content:
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        
-        parsed = json.loads(content.strip())
-        
+            content = content.split("```")[1].strip()
+            if content.startswith("json"): content = content[4:]
+        parsed = json.loads(content)
         if parsed.get("due_at"):
-            try:
-                dt = datetime.fromisoformat(parsed["due_at"])
-                parsed["due_at"] = make_naive(dt)
-            except:
-                parsed["due_at"] = None
-        
-        logger.info(f"✅ AI Parsed: {parsed}")
+            try: parsed["due_at"] = make_naive(datetime.fromisoformat(parsed["due_at"]))
+            except: parsed["due_at"] = None
         return parsed
     except Exception as e:
-        logger.error(f"📉 JSON Parse Failed: {e} | Raw: {content[:200]}")
+        logger.error(f"📉 JSON Parse Failed: {e}")
         return None
 
 async def chat_with_ai(user_text: str) -> str:
-    if not API_KEY:
-        return None
-    
-    system = "Ты — полезный ассистент. Отвечай кратко, по делу, на русском."
-    
-    content = await _call_groq(user_text, temperature=0.7)
-    return content
+    if not API_KEY: return None
+    return await _call_groq(user_text, temperature=0.7)
