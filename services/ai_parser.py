@@ -13,6 +13,13 @@ MODEL = "qwen/qwen-2.5-72b-instruct:free"  # Бесплатная Qwen
 
 tz = ZoneInfo(os.environ.get("TZ", "Europe/Moscow"))
 
+# ✅ НОВАЯ ФУНКЦИЯ: Убирает часовой пояс для совместимости с БД
+def make_naive(dt: datetime) -> datetime:
+    """Убирает часовой пояс из datetime (converts to naive datetime)"""
+    if dt and dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
 async def parse_task_with_ai(text: str) -> dict:
     """Отправляет текст в Qwen и возвращает структуру задачи"""
     if not API_KEY:
@@ -70,6 +77,18 @@ async def parse_task_with_ai(text: str) -> dict:
                     content = content[4:]
             
             parsed = json.loads(content.strip())
+            
+            # ✅ КОНВЕРТАЦИЯ ДАТЫ: Убираем часовой пояс перед возвратом
+            if parsed.get("due_at"):
+                try:
+                    # Парсим строку от AI в datetime объект
+                    dt = datetime.fromisoformat(parsed["due_at"])
+                    # Делаем дату "naive" (без tzinfo) для совместимости с БД
+                    parsed["due_at"] = make_naive(dt)
+                except Exception as e:
+                    logger.warning(f"Date parse error: {e}")
+                    parsed["due_at"] = None
+            
             return parsed
 
     except Exception as e:
