@@ -9,25 +9,27 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 API_KEY = os.environ.get("OPENROUTER_API_KEY")
-MODEL = "qwen/qwen-2.5-72b-instruct:free"
+
+# 🔥 Более стабильная бесплатная модель
+MODEL = "google/gemma-2-2b-it:free"  # или "mistralai/mistral-7b-instruct:free"
+
 tz = ZoneInfo(os.environ.get("TZ", "Europe/Moscow"))
 
 def make_naive(dt: datetime) -> datetime:
-    """Убирает часовой пояс для совместимости с БД"""
     if dt and dt.tzinfo is not None:
         return dt.replace(tzinfo=None)
     return dt
 
 async def _call_qwen(prompt: str, temperature: float = 0.1) -> str:
-    """Внутренний вызов Qwen с логированием"""
     if not API_KEY:
-        logger.warning("OPENROUTER_API_KEY not set")
+        logger.warning("⚠️ OPENROUTER_API_KEY not set")
         return None
 
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": os.environ.get("RENDER_EXTERNAL_URL", "http://localhost"),
+        "X-Title": "TodoBot",  # Требуется OpenRouter
     }
 
     data = {
@@ -37,32 +39,41 @@ async def _call_qwen(prompt: str, temperature: float = 0.1) -> str:
     }
 
     try:
+        logger.info(f"🤖 AI Request to {MODEL}: {prompt[:100]}...")
         async with httpx.AsyncClient() as client:
-            response = await client.post(API_URL, json=data, headers=headers, timeout=15.0)
+            response = await client.post(API_URL, json=data, headers=headers, timeout=20.0)
+            
+            if response.status_code == 404:
+                logger.error(f"❌ 404 Error — проверь ключ и модель. Response: {response.text[:200]}")
+                return None
+                
             response.raise_for_status()
             result = response.json()
-            content = result["choices"][0]["message"]["content"]
+            content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            logger.info(f"✅ AI Response: {content[:100]}...")
             return content.strip()
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"❌ HTTP Error {e.response.status_code}: {e.response.text[:200]}")
+        return None
     except Exception as e:
-        logger.error(f"🤖 AI Error: {e}")
+        logger.error(f"❌ AI Error: {type(e).__name__}: {e}")
         return None
 
 async def parse_task_with_ai(text: str) -> dict:
-    """Парсит задачу через AI, возвращает dict или None при ошибке"""
     if not API_KEY:
         return None
 
     now = datetime.now(tz)
     
-    prompt = f"""
-Ты — ассистент для создания задач. Текущая дата: {now.strftime('%d.%m.%Y %H:%M')}
+    prompt = f"""Ты — ассистент для создания задач. Текущая дата: {now.strftime('%d.%m.%Y %H:%M')}
 
 Извлеки из текста СТРОГО в формате JSON:
 {{"title": "название", "priority": "red/yellow/green/none", "due_at": "YYYY-MM-DDTHH:MM:SS" или null}}
 
 Правила:
 - "красный/срочно/важно/горит" → red
-- "зеленый/легко/лайт" → green
+- "зеленый/легко/лайт" → green  
 - иначе → yellow
 - Если время не указано → 23:59
 - Если дата не ясна → null
@@ -73,10 +84,10 @@ async def parse_task_with_ai(text: str) -> dict:
     
     content = await _call_qwen(prompt, temperature=0.1)
     if not content:
+        logger.warning("🔄 AI returned empty, falling back to local parser")
         return None
 
     try:
-        # Очищаем от markdown
         if "```" in content:
             content = content.split("```")[1]
             if content.startswith("json"):
@@ -84,7 +95,6 @@ async def parse_task_with_ai(text: str) -> dict:
         
         parsed = json.loads(content.strip())
         
-        # Конвертируем дату в naive datetime
         if parsed.get("due_at"):
             try:
                 dt = datetime.fromisoformat(parsed["due_at"])
@@ -92,13 +102,13 @@ async def parse_task_with_ai(text: str) -> dict:
             except:
                 parsed["due_at"] = None
         
+        logger.info(f"✅ AI Parsed: {parsed}")
         return parsed
     except Exception as e:
-        logger.error(f"📉 AI Parse Failed: {e}")
+        logger.error(f"📉 JSON Parse Failed: {e} | Raw: {content[:200]}")
         return None
 
 async def chat_with_ai(user_text: str) -> str:
-    """Обычный чат с нейросетью"""
     if not API_KEY:
         return None
     
