@@ -172,18 +172,19 @@ async def chat_with_ai_handler(message: types.Message):
     await message.answer(reply or "❌ Не удалось получить ответ. Попробуй позже.")
 
 # ================= СТАТИСТИКА =================
-@dp.message(Command("stats"))
-async def show_stats(message: types.Message):
-    await message.answer_chat_action("typing")
-    stats = await task_service.get_task_stats()
-    text = (f"📊 **Твоя статистика:**\n\n"
-            f"📦 Всего задач: {stats['total']}\n"
-            f"✅ Выполнено: {stats['done']}\n"
-            f"⏳ В работе: {stats['pending']}\n"
-            f"🔴 Просрочено: {stats['overdue']}\n\n"
-            f" По приоритетам:\n"
-            f"🔴 Срочные: {stats['red']} | 🟡 Средние: {stats['yellow']} | 🟢 Лайтовые: {stats['green']}")
-    await message.answer(text, parse_mode="Markdown")
+@dp.message(lambda m: m.text == "🤖 AI Чат" or m.text.startswith("/ai "))
+async def chat_with_ai_handler(message: types.Message):
+    user_text = message.text.replace("🤖 AI Чат", "").replace("/ai", "").strip()
+    
+    # Если нажали просто кнопку без текста
+    if not user_text:
+        await message.answer("✏️ Напиши вопрос ПОСЛЕ нажатия кнопки или используй команду /ai [вопрос]\nПример: /ai Придумай идеи для ужина")
+        return
+    
+    # ✅ ПРАВИЛЬНЫЙ ВЫЗОВ ЧАТА
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    reply = await chat_with_ai(user_text)
+    await message.answer(reply or "❌ Не удалось получить ответ. Проверь API ключ.")
 
 # ================= ДОБАВЛЕНИЕ ЗАДАЧ (С AI-ПОМОЩНИКОМ) =================
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
