@@ -233,7 +233,7 @@ async def handle_task_click(callback: types.CallbackQuery):
         msg = "Задача не найдена"
     
     # 2. Тихий ответ (без всплывающего уведомления)
-    await callback.answer(msg, show_alert=False)
+    await callback.answer("")  # Пустой ответ = никаких уведомлений
     
     # 3. ✅ ПЕРЕЗАГРУЖАЕМ СПИСОК (универсально для всех вкладок)
     # Получаем контекст или делаем фолбэк на "Все задачи"
