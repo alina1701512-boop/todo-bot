@@ -10,7 +10,6 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not set in environment variables")
 
-# Convert postgres:// to postgresql+asyncpg:// for async support
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
 
@@ -19,22 +18,21 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 Base = declarative_base()
 
 async def init_db():
-    """Инициализация БД + добавление недостающих колонок"""
+    """Инициализация БД + добавление колонок"""
     async with engine.begin() as conn:
-        # Создаём таблицы (если не существуют)
+        # Создаём таблицы
         await conn.run_sync(Base.metadata.create_all)
         
-        # Пробуем добавить колонки (игнорируем ошибки если уже есть)
+        # Добавляем колонки, если их нет (надёжнее чем reset)
         try:
-            await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS priority VARCHAR(20) DEFAULT 'yellow'"))
-            await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS repeat_rule VARCHAR(20) DEFAULT 'none'"))
-            await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_reminded BOOLEAN DEFAULT FALSE"))
-            logger.info("✅ Database columns updated")
+            await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
+            await conn.execute(text("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE"))
+            logger.info("✅ Database columns added successfully")
         except Exception as e:
-            logger.warning(f"⚠️ Could not add columns (may already exist): {e}")
+            logger.warning(f"⚠️ Column update warning: {e}")
 
 async def reset_database():
-    """Полный сброс БД - удалит ВСЕ данные и пересоздаст таблицы!"""
+    """Полный сброс БД (если очень нужно)"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
