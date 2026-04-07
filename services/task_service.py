@@ -103,3 +103,34 @@ async def cleanup_old_tasks():
                 moved_count += 1
 
                 # 3. Проверка возраста для Красных и остальных
+
+async def get_task_stats() -> dict:
+    """Анализ задач для команды /stats"""
+    from sqlalchemy import func, select
+    async with async_session() as session:
+        now = datetime.utcnow()
+        
+        total = await session.scalar(select(func.count(Task.id)).where(Task.is_archived == False))
+        done = await session.scalar(select(func.count(Task.id)).where(Task.is_archived == False, Task.is_done == True))
+        pending = (total or 0) - (done or 0)
+        
+        overdue = await session.scalar(select(func.count(Task.id)).where(
+            Task.is_archived == False, Task.is_done == False, 
+            Task.due_at < now, Task.due_at.isnot(None)
+        ))
+        
+        priorities = await session.execute(
+            select(Task.priority, func.count(Task.id)).where(Task.is_archived == False).group_by(Task.priority)
+        )
+        p_counts = dict(priorities.all())
+        
+        return {
+            "total": total or 0,
+            "done": done or 0,
+            "pending": pending,
+            "overdue": overdue or 0,
+            "red": p_counts.get("red", 0),
+            "yellow": p_counts.get("yellow", 0),
+            "green": p_counts.get("green", 0),
+            "none": p_counts.get("none", 0)
+        }
