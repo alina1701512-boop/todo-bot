@@ -91,20 +91,21 @@ def parse_date(text):
         return t.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
     return None
 
-# ================= ОТРИСОВКА СПИСКА (С ПАГИНАЦИЕЙ) =================
+# ================= ОТРИСОВКА СПИСКА (С ПАГИНАЦИЕЙ И СЧЕТЧИКОМ) =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
     user_id = message.from_user.id
     
-    # Инициализация контекста с offset=0, если его нет
+    # Инициализация контекста
     if user_id not in user_context:
         user_context[user_id] = {"offset": 0}
     
-    # Сохраняем параметры фильтра
-    user_context[user_id].update({"title": title, "type": filter_type, "val": filter_val})
+    # Сохраняем параметры фильтра, но НЕ сбрасываем offset, если он уже есть
+    current_ctx = user_context[user_id]
+    current_ctx.update({"title": title, "type": filter_type, "val": filter_val})
     
-    offset = user_context[user_id].get("offset", 0)
+    offset = current_ctx.get("offset", 0)
 
-    # Загрузка задач
+    # Загрузка задач из БД
     if filter_type == "all": all_tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
@@ -123,7 +124,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
 
     total_tasks = len(all_tasks)
     
-    # Если задач нет вообще
     if total_tasks == 0:
         text = "📋 Задач нет"
         kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
@@ -133,18 +133,19 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False)
         except: pass
         return
 
-    # 🔥 ПАГИНАЦИЯ: Берем кусок списка (offset : offset + limit)
+    # 🔥 ВЫЧИСЛЯЕМ СТРАНИЦЫ
+    total_pages = (total_tasks + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    current_page = (offset // ITEMS_PER_PAGE) + 1
+    
+    # Берем только задачи для текущей страницы
     page_tasks = all_tasks[offset : offset + ITEMS_PER_PAGE]
 
-    # Формируем текст заголовка
-    text = f"📋 {title} (всего {total_tasks})\n📄 Страница {offset // ITEMS_PER_PAGE + 1}\n\n"
+    # Формируем текст заголовка (Счетчик страниц!)
+    text = f"📋 {title} (всего {total_tasks})\n📄 Страница {current_page} из {total_pages}\n\n"
     
     kb = []
-    
-    # Кнопка режима
-    is_edit_mode = user_edit_mode.get(user_id, False)
-    mode_btn_text = "✅ Обычный режим" if is_edit_mode else "✏️ Режим выбора"
-    kb.append([InlineKeyboardButton(text=mode_btn_text, callback_data="toggle_mode")])
+
+    # ✅ УБРАЛИ КНОПКУ "РЕЖИМ ВЫБОРА" для чистоты интерфейса
 
     # Отрисовка задач на текущей странице
     for t in page_tasks:
@@ -257,7 +258,7 @@ async def handle_text(message):
     if tips:
         await message.answer(f"💡 **AI совет:** {tips}", parse_mode="Markdown")
     
-    # Сброс страницы на 0 при добавлении, чтобы видеть новую задачу
+    # Сброс страницы на 0 при добавлении
     ctx = user_context.get(message.from_user.id)
     if ctx:
         ctx["offset"] = 0 
@@ -267,29 +268,24 @@ async def handle_text(message):
         await show_task_list(FakeMsg(message.from_user.id), ctx["title"], ctx["type"], ctx["val"], is_edit=False)
 
 # ================= КОЛБЭККИ =================
-@dp.callback_query(lambda c: c.data == "toggle_mode")
-async def toggle_mode(callback):
-    uid = callback.from_user.id
-    user_edit_mode[uid] = not user_edit_mode.get(uid, False)
-    ctx = user_context.get(uid)
-    if ctx: await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
-    await callback.answer()
-
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx: 
-        ctx["offset"] = 0 # Сброс на первую страницу
+        ctx["offset"] = 0 
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
     await callback.answer()
 
-# 🔥 ОБРАБОТЧИКИ ПАГИНАЦИИ
+# 🔥 ОБРАБОТЧИКИ ПАГИНАЦИИ (ИСПРАВЛЕНО)
 @dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback: types.CallbackQuery):
     uid = callback.from_user.id
     ctx = user_context.get(uid)
     if ctx:
-        ctx["offset"] = ctx.get("offset", 0) + ITEMS_PER_PAGE
+        # Увеличиваем offset
+        current_offset = ctx.get("offset", 0)
+        ctx["offset"] = current_offset + ITEMS_PER_PAGE
+        # Принудительно обновляем экран
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
     await callback.answer()
 
@@ -298,7 +294,10 @@ async def page_prev(callback: types.CallbackQuery):
     uid = callback.from_user.id
     ctx = user_context.get(uid)
     if ctx:
-        ctx["offset"] = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
+        # Уменьшаем offset, но не меньше 0
+        current_offset = ctx.get("offset", 0)
+        ctx["offset"] = max(0, current_offset - ITEMS_PER_PAGE)
+        # Принудительно обновляем экран
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
     await callback.answer()
 
@@ -331,7 +330,3 @@ async def handle_done_click(callback: types.CallbackQuery):
             await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True)
         except Exception as e:
             logger.warning(f"Edit failed: {e}")
-
-@dp.callback_query(lambda c: c.data.startswith("noop_"))
-async def noop(callback): 
-    await callback.answer("Задача уже выполнена", show_alert=False)
