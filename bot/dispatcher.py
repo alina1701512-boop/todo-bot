@@ -53,27 +53,282 @@ def parse_repeat(text):
 
 def clean_title(text):
     words = ["красный", "срочно", "важно", "горит", "зеленый", "легко", "лайт", 
-             "каждый день", "каждую неделю", "каждый месяц", "ежедневно", "еженедельно"]
+             "каждый день", "каждую неделю", "каждый месяц", "ежедневно", "еженедельно",
+             "сегодня", "завтра", "послезавтра", "неделю", "месяц", "на днях",
+             "в конце месяца", "в начале месяца", "в середине месяца", "в выходные",
+             "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
 def parse_date(text):
+    """Умный парсинг дат с исправлением ошибок и всеми фичами"""
     now = datetime.now(tz)
-    if "сегодня" in text.lower():
-        m = re.search(r'(\d{1,2}):(\d{2})', text)
-        if m:
-            h, mi = int(m.group(1)), int(m.group(2))
-            if 0 <= h <= 23 and 0 <= mi <= 59: return now.replace(hour=h, minute=mi, second=0, microsecond=0)
-    elif "завтра" in text.lower():
-        m = re.search(r'(\d{1,2}):(\d{2})', text)
-        if m:
-            h, mi = int(m.group(1)), int(m.group(2))
-            if 0 <= h <= 23 and 0 <= mi <= 59: return (now + timedelta(days=1)).replace(hour=h, minute=mi, second=0, microsecond=0)
+    text_lower = text.lower().strip()
+    
+    # 1. ИСПРАВЛЕНИЕ ЧАСТЫХ ОПЕЧАТОК
+    corrections = {
+        "сегодны": "сегодня", "сегоднЯ": "сегодня", "сгодня": "сегодня",
+        "завтрп": "завтра", "завтпа": "завтра", "завтрра": "завтра",
+        "послезавтрп": "послезавтра", "послезавтпа": "послезавтра",
+        "неделю": "неделю", "неделе": "неделю", "недели": "неделю",
+        "месяц": "месяц", "месяца": "месяц", "месяце": "месяц",
+        "выходные": "выходные", "выходных": "выходные", "выходные": "выходные"
+    }
+    
+    for wrong, correct in corrections.items():
+        text_lower = text_lower.replace(wrong, correct)
+    
+    # 2. ИЗВЛЕЧЕНИЕ ВРЕМЕНИ (18:00, 18.00, в 18:00)
+    time_match = re.search(r'(\d{1,2})[:.](\d{2})', text_lower)
+    target_hour = None
+    target_minute = 0
+    
+    if time_match:
+        target_hour = int(time_match.group(1))
+        target_minute = int(time_match.group(2))
+        if not (0 <= target_hour <= 23 and 0 <= target_minute <= 59):
+            target_hour = None
+    
+    # 3. РАСПОЗНАВАНИЕ ДАТ
+    
+    # "сегодня"
+    if "сегодня" in text_lower:
+        if target_hour is not None:
+            return now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return now.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "завтра"
+    if "завтра" in text_lower:
+        tomorrow = now + timedelta(days=1)
+        if target_hour is not None:
+            return tomorrow.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return tomorrow.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "послезавтра"
+    if "послезавтра" in text_lower:
+        day_after = now + timedelta(days=2)
+        if target_hour is not None:
+            return day_after.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return day_after.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "на днях" → +2-3 дня
+    if "на днях" in text_lower or "на днях" in text_lower:
+        days_later = now + timedelta(days=3)
+        if target_hour is not None:
+            return days_later.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return days_later.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "в конце месяца" → 28-30 число
+    if "в конце месяца" in text_lower or "конце месяца" in text_lower:
+        # Последний день текущего месяца
+        if now.month == 12:
+            end_of_month = datetime(now.year + 1, 1, 1, tzinfo=tz) - timedelta(days=1)
+        else:
+            end_of_month = datetime(now.year, now.month + 1, 1, tzinfo=tz) - timedelta(days=1)
+        
+        if target_hour is not None:
+            return end_of_month.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return end_of_month.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "в начале месяца" → 1-5 число
+    if "в начале месяца" in text_lower or "начале месяца" in text_lower:
+        # 5-е число текущего или следующего месяца
+        if now.day > 5:
+            target_date = datetime(now.year, now.month + 1, 5, tzinfo=tz) if now.month < 12 else datetime(now.year + 1, 1, 5, tzinfo=tz)
+        else:
+            target_date = datetime(now.year, now.month, 5, tzinfo=tz)
+        
+        if target_hour is not None:
+            return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "в середине месяца" → 14-16 число
+    if "в середине месяца" in text_lower or "середине месяца" in text_lower:
+        # 15-е число
+        if now.day > 15:
+            target_date = datetime(now.year, now.month + 1, 15, tzinfo=tz) if now.month < 12 else datetime(now.year + 1, 1, 15, tzinfo=tz)
+        else:
+            target_date = datetime(now.year, now.month, 15, tzinfo=tz)
+        
+        if target_hour is not None:
+            return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "в выходные" → ближайшая суббота/воскресенье
+    if "в выходные" in text_lower or "выходные" in text_lower:
+        days_until_saturday = (5 - now.weekday()) % 7
+        if days_until_saturday == 0:
+            days_until_saturday = 7  # Если сегодня суббота, то следующие выходные
+        saturday = now + timedelta(days=days_until_saturday)
+        
+        if target_hour is not None:
+            return saturday.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return saturday.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "через N дней/недель/месяцев"
+    days_match = re.search(r'через\s+(\d+)\s*(день|дня|дней|неделю|недели|месяц|месяца)', text_lower)
+    if days_match:
+        num = int(days_match.group(1))
+        unit = days_match.group(2)
+        
+        if unit in ["день", "дня", "дней"]:
+            target_date = now + timedelta(days=num)
+        elif unit in ["неделю", "недели"]:
+            target_date = now + timedelta(weeks=num)
+        elif unit in ["месяц", "месяца"]:
+            target_date = now + timedelta(days=num*30)
+        else:
+            target_date = now + timedelta(days=num)
+        
+        if target_hour is not None:
+            return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "на следующей неделе" / "на этой неделе"
+    if "неделе" in text_lower or "неделю" in text_lower:
+        if "следующ" in text_lower:
+            # Следующая неделя (+7 дней от текущего понедельника)
+            days_until_monday = (7 - now.weekday()) % 7
+            if days_until_monday == 0:
+                days_until_monday = 7
+            target_date = now + timedelta(days=days_until_monday)
+        else:
+            # Эта неделя (ближайший понедельник)
+            days_until_monday = (7 - now.weekday()) % 7
+            if days_until_monday == 0:
+                target_date = now  # Сегодня понедельник
+            else:
+                target_date = now + timedelta(days=days_until_monday)
+        
+        if target_hour is not None:
+            return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # "на следующей неделе во вторник" / "в пятницу на следующей неделе"
+    weekdays = {
+        'понедельник': 0, 'пон': 0, 'пн': 0,
+        'вторник': 1, 'вт': 1, 'втор': 1,
+        'среда': 2, 'ср': 2, 'сред': 2,
+        'четверг': 3, 'чт': 3, 'четв': 3,
+        'пятница': 4, 'пт': 4, 'пятн': 4,
+        'суббота': 5, 'сб': 5, 'суб': 5,
+        'воскресенье': 6, 'вс': 6, 'воскр': 6
+    }
+    
+    for day_name, weekday_num in weekdays.items():
+        if day_name in text_lower:
+            if "следующ" in text_lower:
+                # Следующая неделя
+                days_until = (weekday_num - now.weekday()) % 7
+                if days_until <= 3:  # Если это на этой неделе, то берём следующую
+                    days_until += 7
+            else:
+                # Ближайший такой день
+                days_until = (weekday_num - now.weekday()) % 7
+                if days_until == 0:
+                    days_until = 7  # Если сегодня этот день, то следующая неделя
+            
+            target_date = now + timedelta(days=days_until)
+            
+            if target_hour is not None:
+                return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+            return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # 4. ФОРМАТЫ ДАТ: 29.04.2025, 29.04, 29/04/2025
+    date_match = re.search(r'(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?', text_lower)
+    if date_match:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        year = int(date_match.group(3)) if date_match.group(3) else now.year
+        
+        # Если год двузначный
+        if year < 100:
+            year = 2000 + year if year < 50 else 1900 + year
+        
+        try:
+            target_date = datetime(year, month, day, tzinfo=tz)
+            if target_hour is not None:
+                target_date = target_date.replace(hour=target_hour, minute=target_minute)
+            else:
+                target_date = target_date.replace(hour=23, minute=59)
+            
+            # Если дата в прошлом, считаем что это следующий год
+            if target_date < now:
+                target_date = target_date.replace(year=now.year + 1)
+            
+            return target_date
+        except ValueError:
+            pass  # Некорректная дата, пробуем дальше
+    
+    # 5. МЕСЯЦА ТЕКСТОМ: "29 апреля", "1 мая 2025"
+    month_names = {
+        'январ': 1, 'феврал': 2, 'март': 3, 'апрел': 4, 'мая': 5, 'май': 5,
+        'июн': 6, 'июл': 7, 'август': 8, 'сентябр': 9, 'октябр': 10,
+        'ноябр': 11, 'декабр': 12
+    }
+    
+    for month_str, month_num in month_names.items():
+        if month_str in text_lower:
+            # Ищем день перед названием месяца
+            day_match = re.search(r'(\d{1,2})\s*' + month_str, text_lower)
+            if day_match:
+                day = int(day_match.group(1))
+                year = now.year
+                
+                try:
+                    target_date = datetime(year, month_num, day, tzinfo=tz)
+                    if target_hour is not None:
+                        target_date = target_date.replace(hour=target_hour, minute=target_minute)
+                    else:
+                        target_date = target_date.replace(hour=23, minute=59)
+                    
+                    if target_date < now:
+                        target_date = target_date.replace(year=now.year + 1)
+                    
+                    return target_date
+                except ValueError:
+                    pass
+    
+    # 6. ДНИ НЕДЕЛИ: "в понедельник", "пятница"
+    for day_name, weekday_num in weekdays.items():
+        if day_name in text_lower:
+            days_until = (weekday_num - now.weekday()) % 7
+            if days_until == 0:
+                days_until = 7  # Если сегодня этот день, то следующая неделя
+            target_date = now + timedelta(days=days_until)
+            
+            if target_hour is not None:
+                return target_date.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+            return target_date.replace(hour=23, minute=59, second=0, microsecond=0)
+    
+    # 7. ПЫТАЕМСЯ ИСПОЛЬЗОВАТЬ DATEPARSER (для сложных случаев)
     try:
-        p = dateparser.parse(text, settings={"TIMEZONE": TZ, "RETURN_AS_TIMEZONE_AWARE": True, "PREFER_DATES_FROM": "future"})
-        if p and (p - now) > timedelta(hours=1): return p
-    except: pass
-    return None
+        parsed = dateparser.parse(
+            text,
+            settings={
+                "TIMEZONE": TZ,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future",
+                "RELATIVE_BASE": now
+            }
+        )
+        if parsed and parsed > now:
+            if target_hour is not None:
+                parsed = parsed.replace(hour=target_hour, minute=target_minute)
+            return parsed
+    except:
+        pass
+    
+    # 8. ТОЛЬКО ВРЕМЯ БЕЗ ДАТЫ (считаем что это сегодня/завтра)
+    if target_hour is not None:
+        today_time = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+        if today_time > now:
+            return today_time
+        else:
+            # Время уже прошло сегодня, значит завтра
+            return (now + timedelta(days=1)).replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+    
+    return None  # Не удалось распарсить
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False):
@@ -192,7 +447,6 @@ async def handle_text(message):
     # ✅ ОБНОВЛЯЕМ ТЕКУЩИЙ СПИСОК
     ctx = user_context.get(message.from_user.id)
     if ctx:
-        # Создаём фейковое сообщение для обновления
         class FakeMessage:
             def __init__(self, user_id):
                 self.from_user = types.User(id=user_id, is_bot=False, first_name="User")
