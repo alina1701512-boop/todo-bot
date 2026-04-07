@@ -14,6 +14,7 @@ from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from services import task_service
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,16 +22,16 @@ app = FastAPI()
 scheduler = AsyncIOScheduler()
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
+# 🔥 ФУНКЦИЯ МИГРАЦИИ (добавляет user_id, если нет)
 async def migrate_add_user_id():
     """Добавляет поле user_id в таблицу tasks, если его нет."""
     try:
         async with async_session() as session:
-            # Пробуем добавить колонку. Если она уже есть — будет ошибка, которую мы игнорируем.
             await session.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR"))
             await session.commit()
             logger.info("✅ Migration: Added user_id column to tasks table")
     except Exception as e:
-        # Ошибка значит, что колонка скорее всего уже существует — это нормально.
+        # Если колонка уже есть — это нормально, просто логируем
         logger.info(f"ℹ️ Migration: user_id column likely already exists ({e})")
         async with async_session() as session:
             await session.rollback()
@@ -40,16 +41,18 @@ async def startup():
     logger.info("🚀 Starting application...")
     logger.info(f"📍 APP_HOST: {APP_HOST}")
     
+    # 1. Инициализация БД
     try:
         await init_db()
         logger.info("✅ Database initialized")
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
-
-    # 🔥 Запускаем миграцию для мультипользовательского режима
+    
+    # 2. 🔥 Запуск миграции (добавит user_id для мультипользовательского режима)
     await migrate_add_user_id()
     
+    # 3. Установка вебхука Telegram
     try:
         webhook_url = f"{APP_HOST}/webhook/telegram"
         await bot.set_webhook(webhook_url, allowed_updates=dp.resolve_used_update_types())
@@ -57,9 +60,9 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # ================= ПЛАНИРОВЩИК =================
+    # ================= ПЛАНИРОВЩИК ЗАДАЧ =================
     
-    # 1. Очистка задач в 00:00 МСК
+    # Задача 1: Ежедневная очистка в 00:00 МСК
     scheduler.add_job(
         task_service.cleanup_old_tasks, 
         "cron", 
@@ -70,12 +73,13 @@ async def startup():
         replace_existing=True
     )
     
-    # 2. 🔔 Напоминания каждые 15 минут (передаём bot как аргумент)
+    # Задача 2: 🔔 Напоминания каждые 15 минут
+    # Важно: передаём экземпляр bot через args, чтобы функция могла отправлять сообщения
     scheduler.add_job(
         task_service.send_reminders, 
         "interval", 
         minutes=15, 
-        args=[bot],  # 👈 Важно: передаём экземпляр бота
+        args=[bot],  
         id="send_reminders", 
         replace_existing=True
     )
@@ -85,7 +89,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Корректно останавливает планировщик при выключении."""
+    """Корректно останавливает планировщик при выключении сервера."""
     logger.info("🛑 Shutting down scheduler...")
     scheduler.shutdown()
 
