@@ -34,7 +34,7 @@ async def init_db():
             logger.warning(f"⚠️ Could not add columns (may already exist): {e}")
 
 async def reset_database():
-    """Полный сброс БД - удалит ВСЕ данные!"""
+    """Полный сброс БД - удалит ВСЕ данные и пересоздаст таблицы!"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
