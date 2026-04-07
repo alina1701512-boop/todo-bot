@@ -3,8 +3,6 @@ import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-SCOPES = ['https://www.googleapis.com/auth/calendar']
-
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram.types import Update
@@ -21,16 +19,13 @@ app = FastAPI()
 scheduler = AsyncIOScheduler()
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
-# =============================================================================
-# 🚀 STARTUP
-# =============================================================================
 @app.on_event("startup")
 async def startup():
     logger.info("🚀 Starting application...")
     logger.info(f"📍 APP_HOST: {APP_HOST}")
     
     try:
-        await init_db()  # ✅ Здесь добавятся колонки
+        await init_db()
         logger.info("✅ Database initialized")
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
@@ -43,24 +38,11 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # ⏰ ПЛАНИРОВЩИК
-    scheduler.add_job(
-        task_service.cleanup_old_tasks, 
-        "cron", hour=0, minute=0, 
-        timezone=MSK_TZ, 
-        id="daily_cleanup", 
-        replace_existing=True
-    )
-    
-    async def check_reminders(): pass
-    scheduler.add_job(check_reminders, "interval", minutes=5, id="check_reminders", replace_existing=True)
-    
+    # Планировщик: очистка в 00:00 МСК
+    scheduler.add_job(task_service.cleanup_old_tasks, "cron", hour=0, minute=0, timezone=MSK_TZ, id="daily_cleanup", replace_existing=True)
     scheduler.start()
-    logger.info("⏰ Scheduler started: Cleanup at 00:00 MSK")
+    logger.info("⏰ Scheduler started")
 
-# =============================================================================
-# 🔗 WEBHOOKS
-# =============================================================================
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     try:
@@ -70,10 +52,6 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"Webhook error: {e}")
         return JSONResponse({"status": "error"}, status_code=500)
-        
-@app.post("/webhook/alice")
-async def alice_webhook(request: Request):
-    return JSONResponse({"status": "ok"})
 
 @app.get("/")
 async def root():
@@ -82,8 +60,3 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "running", "db": "ok"}
-
-@app.get("/auth/login")
-async def auth_login(): return {"status": "auth"}
-@app.get("/auth/callback")
-async def auth_callback(request: Request): return {"status": "callback"}
