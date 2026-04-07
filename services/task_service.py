@@ -1,17 +1,11 @@
 from sqlalchemy import select, func
 from database import async_session
 from models import Task
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date, timedelta
 
 async def create_task(title: str, due_at, priority: str = "none", repeat_rule: str = "none") -> Task:
     async with async_session() as session:
-        task = Task(
-            title=title, 
-            due_at=due_at, 
-            priority=priority, 
-            repeat_rule=repeat_rule,
-            created_at=datetime.utcnow() # Запоминаем когда создали
-        )
+        task = Task(title=title, due_at=due_at, priority=priority, repeat_rule=repeat_rule)
         session.add(task)
         await session.commit()
         await session.refresh(task)
@@ -19,8 +13,7 @@ async def create_task(title: str, due_at, priority: str = "none", repeat_rule: s
 
 async def get_all_tasks():
     async with async_session() as session:
-        # Не показываем архивные задачи
-        stmt = select(Task).where(Task.is_archived == False).order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
+        stmt = select(Task).order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
         res = await session.execute(stmt)
         return res.scalars().all()
 
@@ -31,10 +24,7 @@ async def get_task_by_id(task_id: int):
 
 async def get_tasks_for_date(target_date: date):
     async with async_session() as session:
-        stmt = select(Task).where(
-            Task.is_archived == False,
-            func.date(Task.due_at) == target_date
-        ).order_by(Task.due_at)
+        stmt = select(Task).where(func.date(Task.due_at) == target_date).order_by(Task.due_at)
         res = await session.execute(stmt)
         return res.scalars().all()
 
@@ -42,7 +32,6 @@ async def get_tasks_for_week(start_date: date):
     end_date = start_date + timedelta(days=7)
     async with async_session() as session:
         stmt = select(Task).where(
-            Task.is_archived == False,
             func.date(Task.due_at) >= start_date,
             func.date(Task.due_at) <= end_date
         ).order_by(Task.due_at)
@@ -68,31 +57,7 @@ async def delete_task(task_id: int):
             return True
     return False
 
-# --- ЛОГИКА АВТО-ПЕРЕНОСА И АРХИВАЦИИ ---
+# ❌ Временно отключаем cleanup_old_tasks, чтобы не было ошибок
 async def cleanup_old_tasks():
-    """Переносит просроченные задачи на завтра или архивирует через 30 дней"""
-    async with async_session() as session:
-        # Берем все активные задачи
-        stmt = select(Task).where(Task.is_archived == False, Task.is_done == False)
-        res = await session.execute(stmt)
-        tasks = res.scalars().all()
-        
-        now = datetime.utcnow()
-        moved_count = 0
-        archived_count = 0
-        
-        for t in tasks:
-            if t.due_at and t.due_at < now: # Если просрочена
-                age = now - t.created_at
-                
-                # Если старше 30 дней и НЕ красная -> Архив
-                if age > timedelta(days=30) and t.priority != "red":
-                    t.is_archived = True
-                    archived_count += 1
-                else:
-                    # Иначе переносим на завтра
-                    t.due_at = datetime.now().replace(hour=23, minute=59, second=59) + timedelta(days=1)
-                    moved_count += 1
-        
-        await session.commit()
-        print(f"Cleanup: Moved {moved_count}, Archived {archived_count}")
+    """Заглушка — функционал архивации вернём позже"""
+    pass
