@@ -4,22 +4,20 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.exceptions import TelegramBadRequest
 import re
 import logging
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
 from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
 
 logger = logging.getLogger(__name__)
-user_context = {}
+user_context = {}  # Хранит: offset, title, type, val, ai_mode
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
-# Настройки
 ITEMS_PER_PAGE = 8
 
-# ================= КЛАВИАТУРЫ =================
 def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📋 Все задачи")],
@@ -40,7 +38,6 @@ def get_period_menu_keyboard():
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
-# ================= УТИЛИТЫ =================
 def parse_priority(text):
     t = text.lower()
     if any(w in t for w in ["красный", "срочно", "важно", "горит", "срочн", "критич"]): return "red"
@@ -52,7 +49,6 @@ def parse_date(text):
     text_lower = text.lower().strip()
     corrections = {"сегодны": "сегодня", "завтрп": "завтра", "послезавтрп": "послезавтра"}
     for wrong, correct in corrections.items(): text_lower = text_lower.replace(wrong, correct)
-    
     time_match = re.search(r'(\d{1,2})[:.](\d{2})', text_lower)
     target_hour = None
     target_minute = 0
@@ -60,9 +56,7 @@ def parse_date(text):
         target_hour = int(time_match.group(1))
         target_minute = int(time_match.group(2))
         if not (0 <= target_hour <= 23 and 0 <= target_minute <= 59): target_hour = None
-
-    if "сегодня" in text_lower:
-        return now.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
+    if "сегодня" in text_lower: return now.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
     if "завтра" in text_lower:
         t = now + timedelta(days=1)
         return t.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
@@ -86,11 +80,8 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    
-    # Загрузка задач
     if filter_type == "all": all_tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
@@ -108,15 +99,11 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: all_tasks = []
 
     total = len(all_tasks)
+    if page_offset >= total and total > 0: page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+    if page_offset < 0: page_offset = 0
     
-    # 🔥 ЗАЩИТА: если offset вышел за границы, сбрасываем на последнюю страницу
-    if page_offset >= total and total > 0:
-        page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
-    if page_offset < 0:
-        page_offset = 0
-    
-    # Сохраняем контекст ПОСЛЕ корректировки offset
-    user_context[user_id] = {"title": title, "type": filter_type, "val": filter_val, "offset": page_offset}
+    user_context.setdefault(user_id, {})
+    user_context[user_id].update({"title": title, "type": filter_type, "val": filter_val, "offset": page_offset})
 
     if total == 0:
         text = "📋 Задач нет"
@@ -127,14 +114,12 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         except: pass
         return
 
-    # Пагинация
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
     page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
-
     for t in page_tasks:
         icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
@@ -142,82 +127,80 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
 
-    # Навигация
     nav = []
-    if page_offset > 0: 
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total: 
-        nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
-    if nav: 
-        kb.append(nav)
+    if page_offset > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
+    if page_offset + ITEMS_PER_PAGE < total: nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
+    if nav: kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     try:
-        if is_edit: 
-            await message.edit_text(text, reply_markup=markup)
-        else: 
-            await message.answer(text, reply_markup=markup)
+        if is_edit: await message.edit_text(text, reply_markup=markup)
+        else: await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
         logger.error(f"❌ Edit failed: {e}")
 
-# ================= ОБРАБОТЧИКИ МЕНЮ =================
+# ================= ОБРАБОТЧИКИ =================
 @dp.message(Command("start"))
 async def cmd_start(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("👋 Привет! Я твой AI-планировщик.", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔙 Назад")
 async def go_back(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("🔙 Главное меню:", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔥 Важность")
 async def priority_menu(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("🔥 Выбери важность:", reply_markup=get_priority_menu_keyboard())
 
 @dp.message(lambda m: m.text == "📅 Период")
 async def period_menu(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("📅 Выбери период:", reply_markup=get_period_menu_keyboard())
 
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await show_task_list(message, "Все задачи", "all", None, page_offset=0)
 
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
 async def filter_importance(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     p_map = {"🔴 Срочные": "red", "🟡 Средние": "yellow", "🟢 Лайтовые": "green"}
     await show_task_list(message, message.text, "priority", p_map[message.text], page_offset=0)
 
 @dp.message(lambda m: m.text in ["Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"])
 async def filter_period(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await show_task_list(message, message.text, "period", message.text, page_offset=0)
 
-# ================= 🤖 AI ЧАТ =================
-@dp.message(lambda m: m.text == "🤖 AI Чат" or m.text.startswith("/ai "))
-async def chat_with_ai_handler(message: types.Message):
-    user_text = message.text.replace("🤖 AI Чат", "").replace("/ai", "").strip()
-    
-    if not user_text:
-        await message.answer("✏️ Напиши вопрос после /ai\nНапример: /ai Придумай 3 идеи для ужина")
-        return
-    
-    await message.answer("🤖 Думаю...")
-    reply = await chat_with_ai(user_text)
-    
-    if reply:
-        await message.answer(reply)
-    else:
-        await message.answer("❌ Не удалось получить ответ.\n\nПроверь:\n• API ключ в Render\n• Есть ли кредиты на OpenRouter\n• Попробуй позже")
+# 🤖 ВХОД В РЕЖИМ AI
+@dp.message(lambda m: m.text == "🤖 AI Чат")
+async def enter_ai_mode(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = True
+    await message.answer("🤖 **Режим AI-чата включен**\n\nПиши что угодно, я помогу!\nЧтобы вернуться к задачам, нажми /start или 🔙 Назад.")
 
-# ================= ДОБАВЛЕНИЕ ЗАДАЧ =================
+# 📝 ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
     "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад", "🤖 AI Чат",
-    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые",
-    "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
+    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые", "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
 ])
 async def handle_text(message):
+    uid = message.from_user.id
+    state = user_context.setdefault(uid, {})
     text = message.text.strip()
-    
+
+    # 🔥 УМНЫЙ МАРШРУТ: AI-режим ИЛИ знак вопроса в конце
+    if state.get("ai_mode") or text.endswith("?"):
+        await message.answer("🤖 Думаю...")
+        reply = await chat_with_ai(text)
+        await message.answer(reply or "❌ Не удалось получить ответ.")
+        return
+
+    # 📦 СОЗДАНИЕ ЗАДАЧИ
     ai_result = await parse_task_with_ai(text)
-    
     if ai_result and ai_result.get("title"):
         title = ai_result.get("title")
         priority = ai_result.get("priority", "none")
@@ -236,7 +219,7 @@ async def handle_text(message):
     
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
     
-    ctx = user_context.get(message.from_user.id)
+    ctx = user_context.get(uid)
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
 
@@ -245,43 +228,24 @@ async def handle_text(message):
 async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
+        ctx["ai_mode"] = False
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback):
-    uid = callback.from_user.id
-    ctx = user_context.get(uid)
+    ctx = user_context.get(callback.from_user.id)
     if ctx:
-        current_offset = ctx.get("offset", 0)
-        new_offset = current_offset + ITEMS_PER_PAGE
-        
-        # 🔥 Проверяем, не вышли ли за границы, перед обновлением контекста
-        if ctx["type"] == "all": 
-            total = len(await task_service.get_all_tasks())
-        elif ctx["type"] == "priority":
-            all_t = await task_service.get_all_tasks()
-            total = len([t for t in all_t if t.priority == ctx["val"]])
-        elif ctx["type"] == "period":
-            # Упрощённая проверка — если не можем точно посчитать, разрешаем переход
-            total = 999  
-        else:
-            total = 0
-            
-        if new_offset < total or total == 999:
-            ctx["offset"] = new_offset
-            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
-        else:
-            # Если вышли за границы — просто обновляем текущую страницу
-            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=current_offset)
+        new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
+        ctx["offset"] = new_offset
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_prev")
 async def page_prev(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
-        current_offset = ctx.get("offset", 0)
-        new_offset = max(0, current_offset - ITEMS_PER_PAGE)
+        new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
         ctx["offset"] = new_offset
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
     await callback.answer()
@@ -290,23 +254,12 @@ async def page_prev(callback):
 async def handle_task_click(callback):
     uid = callback.from_user.id
     tid = int(callback.data.split("_")[1])
-    
-    # 1. Меняем статус
     task = await task_service.get_task_by_id(tid)
-    if task:
-        await task_service.update_task(tid, is_done=not task.is_done)
-    
-    # 2. Тихий ответ
+    if task: await task_service.update_task(tid, is_done=not task.is_done)
     await callback.answer("")
-    
-    # 3. 🔥 Обновляем список, СОХРАНЯЯ текущий offset из контекста
     ctx = user_context.get(uid)
     if ctx:
-        current_offset = ctx.get("offset", 0)  # Берём offset ДО обновления списка
         try:
-            # 🔥 Важно: передаём тот же offset, не даём show_task_list его перезаписать
-            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=current_offset)
+            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
         except Exception as e:
-            logger.error(f"❌ Edit failed in handle_task_click: {e}")
-            # Фолбэк: если не получилось обновить, просто покажем первую страницу
-            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+            logger.error(f"❌ Edit failed: {e}")
