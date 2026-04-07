@@ -83,3 +83,47 @@ async def parse_task_with_ai(text: str) -> dict:
 async def chat_with_ai(user_text: str) -> str:
     if not API_KEY: return None
     return await _call_groq(user_text, temperature=0.7)
+
+# ================= 🎤 ГОЛОСОВАЯ ТРАНСКРИБАЦИЯ (Whisper) =================
+async def transcribe_voice(audio_bytes: bytes) -> str:
+    """
+    Отправляет аудио в Groq Whisper и возвращает распознанный текст.
+    """
+    if not API_KEY:
+        logger.warning("⚠️ GROQ_API_KEY not set for transcription")
+        return None
+
+    # Groq Whisper API endpoint
+    url = "https://api.groq.com/openai/v1/audio/transcriptions"
+    
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+    }
+    
+    # Формируем multipart/form-data запрос
+    data = {
+        "model": "distil-whisper-large-v3-en",  # Поддерживает русский!
+        "language": "ru",  # Явно указываем русский для точности
+    }
+    
+    files = {
+        "file": ("voice.ogg", audio_bytes, "audio/ogg"),
+    }
+
+    try:
+        logger.info("🎤 Sending voice to Groq Whisper...")
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, data=data, files=files, timeout=30.0)
+            
+            if response.status_code != 200:
+                logger.error(f"❌ Whisper Error {response.status_code}: {response.text[:200]}")
+                return None
+                
+            result = response.json()
+            text = result.get("text", "").strip()
+            logger.info(f"✅ Transcribed: {text}")
+            return text
+            
+    except Exception as e:
+        logger.error(f"❌ Transcription Error: {e}")
+        return None
