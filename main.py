@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram.types import Update
-from database import init_db
+from sqlalchemy import text
+
+from database import init_db, async_session
 from config import TG_TOKEN, APP_HOST, TZ
 from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -19,6 +21,20 @@ app = FastAPI()
 scheduler = AsyncIOScheduler()
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
+async def migrate_add_user_id():
+    """Добавляет поле user_id в таблицу tasks, если его нет."""
+    try:
+        async with async_session() as session:
+            # Пробуем добавить колонку. Если она уже есть — будет ошибка, которую мы игнорируем.
+            await session.execute(text("ALTER TABLE tasks ADD COLUMN user_id VARCHAR"))
+            await session.commit()
+            logger.info("✅ Migration: Added user_id column to tasks table")
+    except Exception as e:
+        # Ошибка значит, что колонка скорее всего уже существует — это нормально.
+        logger.info(f"ℹ️ Migration: user_id column likely already exists ({e})")
+        async with async_session() as session:
+            await session.rollback()
+
 @app.on_event("startup")
 async def startup():
     logger.info("🚀 Starting application...")
@@ -30,6 +46,9 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Database error: {e}")
         raise
+
+    # 🔥 Запускаем миграцию для мультипользовательского режима
+    await migrate_add_user_id()
     
     try:
         webhook_url = f"{APP_HOST}/webhook/telegram"
@@ -38,10 +57,37 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # Планировщик: очистка в 00:00 МСК
-    scheduler.add_job(task_service.cleanup_old_tasks, "cron", hour=0, minute=0, timezone=MSK_TZ, id="daily_cleanup", replace_existing=True)
+    # ================= ПЛАНИРОВЩИК =================
+    
+    # 1. Очистка задач в 00:00 МСК
+    scheduler.add_job(
+        task_service.cleanup_old_tasks, 
+        "cron", 
+        hour=0, 
+        minute=0, 
+        timezone=MSK_TZ, 
+        id="daily_cleanup", 
+        replace_existing=True
+    )
+    
+    # 2. 🔔 Напоминания каждые 15 минут (передаём bot как аргумент)
+    scheduler.add_job(
+        task_service.send_reminders, 
+        "interval", 
+        minutes=15, 
+        args=[bot],  # 👈 Важно: передаём экземпляр бота
+        id="send_reminders", 
+        replace_existing=True
+    )
+    
     scheduler.start()
-    logger.info("⏰ Scheduler started")
+    logger.info("⏰ Scheduler started: Cleanup at 00:00 MSK, Reminders every 15 min")
+
+@app.on_event("shutdown")
+async def shutdown():
+    """Корректно останавливает планировщик при выключении."""
+    logger.info("🛑 Shutting down scheduler...")
+    scheduler.shutdown()
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
