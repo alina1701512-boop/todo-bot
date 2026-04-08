@@ -27,12 +27,14 @@ def _get_flow():
     """Создаёт OAuth flow для авторизации"""
     return InstalledAppFlow.from_client_config(
         {
-            "installed": {
+            "web": {  # ← Используем "web" для Web Application
                 "client_id": CLIENT_ID,
                 "client_secret": CLIENT_SECRET,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost:8080/"]  # 🔥 Заменили на localhost
+                "redirect_uris": [
+                    "https://todo-bot-gjqf.onrender.com/callback"  # ← Только Render URL
+                ]
             }
         },
         SCOPES
