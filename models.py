@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text  # 🔥 Добавили Text
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
 
@@ -16,6 +16,9 @@ class Task(Base):
     is_reminded = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_archived = Column(Boolean, default=False)
+    
+    # 🔥 НОВОЕ ПОЛЕ: ID пользователя
+    user_id = Column(String, nullable=True, index=True)  # Telegram user_id (строка)
 
 # ================= 🔐 GOOGLE AUTH =================
 class UserGoogleAuth(Base):
@@ -25,6 +28,3 @@ class UserGoogleAuth(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String, unique=True, nullable=False, index=True)  # Telegram user_id
     creds = Column(Text)  # JSON-строка с токенами (access + refresh)
-    
-    # 🔥 НОВОЕ ПОЛЕ: ID пользователя
-    user_id = Column(String, nullable=True, index=True)  # Telegram user_id (строка)
