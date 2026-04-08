@@ -9,6 +9,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
+# 🔥 Импортируем из config вместо os.environ
+from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TZ, APP_HOST
 from database import async_session
 from models import UserGoogleAuth
 from sqlalchemy import select, delete
@@ -27,13 +29,13 @@ def _get_flow():
     """Создаёт OAuth flow для авторизации"""
     return InstalledAppFlow.from_client_config(
         {
-            "web": {  # ← Используем "web" для Web Application
-                "client_id": CLIENT_ID,
-                "client_secret": CLIENT_SECRET,
+            "web": {
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "redirect_uris": [
-                    "https://todo-bot-gjqf.onrender.com/callback"  # ← Только Render URL
+                    f"{APP_HOST}/callback"  # 🔥 Динамический URL
                 ]
             }
         },
