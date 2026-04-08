@@ -23,17 +23,18 @@ dp = Dispatcher()
 ITEMS_PER_PAGE = 8
 
 # ================= КЛАВИАТУРЫ =================
-def get_settings_menu_keyboard():
+def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Google Calendar")],
-        [KeyboardButton(text="❓ Помощь")],
-        [KeyboardButton(text="🔙 Назад")]
+        [KeyboardButton(text="📋 Все задачи")],
+        [KeyboardButton(text="🤖 AI Чат")],
+        [KeyboardButton(text="🔥 Важность"), KeyboardButton(text="📅 Период")],
+        [KeyboardButton(text="⚙️ Меню")]
     ], resize_keyboard=True)
 
 def get_settings_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Google Calendar")],
-        [KeyboardButton(text="❓ Помощ�")],
+        [KeyboardButton(text="❓ Помощь")],
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
@@ -358,23 +359,6 @@ async def disconnect_google_button(message):
 @dp.message(lambda m: m.text == "📋 Статус")
 async def google_status_button(message):
     await google_status(message)
-
-# ================= НАПОМИНАНИЯ =================
-# @dp.message(lambda m: m.text == "🔔 Напоминания")
-async def reminders_menu(message):
-    await message.answer("🔔 **Настройка напоминаний:**\n\nВыбери интервал или включи/выключи уведомления.", parse_mode="Markdown", reply_markup=get_reminders_menu_keyboard())
-
-# @dp.message(lambda m: m.text == "✅ Включить")
-async def enable_reminders(message):
-    await message.answer("✅ **Напоминания включены!**\n\nТы будешь получать уведомления о задачах.", parse_mode="Markdown")
-
-# @dp.message(lambda m: m.text == "❌ Выключить")
-async def disable_reminders(message):
-    await message.answer("❌ **Напоминания выключены.**\n\nТы не будешь получать уведомления.", parse_mode="Markdown")
-
-# @dp.message(lambda m: m.text in ["🔔 За 15 минут", "🔔 За 30 минут", "🔔 За 1 час", "🔔 За 1 день"])
-async def set_reminder_time(message):
-    await message.answer(f"✅ **Время напоминания установлено:** {message.text}\n\nТы будешь получать уведомления за {message.text[2:]} до дедлайна.", parse_mode="Markdown")
 
 # ================= ПОМОЩЬ =================
 @dp.message(lambda m: m.text == "❓ Помощь")
