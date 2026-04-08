@@ -20,14 +20,11 @@ logger = logging.getLogger(__name__)
 # Настройки
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-# ================= ОСНОВНЫЕ ФУНКЦИИ =================
-
 async def get_auth_url(user_id: str) -> str:
     """Генерирует ссылку для авторизации пользователя"""
     if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
         raise ValueError("Google credentials not configured")
     
-    # Формируем URL вручную с правильным redirect_uri
     params = {
         'client_id': GOOGLE_CLIENT_ID,
         'redirect_uri': f"{APP_HOST}/callback",
@@ -43,7 +40,7 @@ async def get_auth_url(user_id: str) -> str:
 async def save_code(user_id: str, code: str) -> bool:
     """Сохраняет токен после получения кода от пользователя"""
     try:
-        # Создаем flow с правильным redirect_uri
+        # Создаем flow
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -58,8 +55,19 @@ async def save_code(user_id: str, code: str) -> bool:
             redirect_uri=f"{APP_HOST}/callback"
         )
         
+        # Получаем токен
         flow.fetch_token(code=code)
         creds = flow.credentials
+        
+        # Сохраняем токен в правильном формате
+        creds_dict = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': creds.scopes
+        }
         
         async with async_session() as session:
             result = await session.execute(
@@ -71,7 +79,8 @@ async def save_code(user_id: str, code: str) -> bool:
                 user_auth = UserGoogleAuth(user_id=str(user_id))
                 session.add(user_auth)
             
-            user_auth.creds = json.dumps(creds.to_json())
+            # Сохраняем как JSON строку
+            user_auth.creds = json.dumps(creds_dict)
             await session.commit()
             
         logger.info(f"✅ Google auth saved for user {user_id}")
@@ -88,17 +97,28 @@ async def _get_creds_from_db(user_id: str):
         )
         user_auth = result.scalar_one_or_none()
         
-        if not user_auth:
+        if not user_auth or not user_auth.creds:
             return None
         
         try:
-            creds = Credentials.from_authorized_user_info(
-                json.loads(user_auth.creds), SCOPES
-            )
+            # Парсим JSON
+            creds_dict = json.loads(user_auth.creds)
+            
+            # Создаем объект Credentials
+            creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
             
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                user_auth.creds = json.dumps(creds.to_json())
+                # Обновляем в базе
+                updated_dict = {
+                    'token': creds.token,
+                    'refresh_token': creds.refresh_token,
+                    'token_uri': creds.token_uri,
+                    'client_id': creds.client_id,
+                    'client_secret': creds.client_secret,
+                    'scopes': creds.scopes
+                }
+                user_auth.creds = json.dumps(updated_dict)
                 await session.commit()
                 logger.info(f"🔄 Token refreshed for user {user_id}")
             
@@ -121,10 +141,7 @@ async def disconnect_google(user_id: str) -> bool:
         return False
 
 async def sync_task_to_calendar(user_id: str, task) -> str | None:
-    """
-    Синхронизирует задачу с Google Calendar.
-    Если у задачи нет даты → ставит на сегодня в 12:00.
-    """
+    """Синхронизирует задачу с Google Calendar"""
     creds = await _get_creds_from_db(user_id)
     if not creds:
         logger.warning(f"⚠️ No valid Google creds for user {user_id}")
@@ -133,7 +150,6 @@ async def sync_task_to_calendar(user_id: str, task) -> str | None:
     try:
         service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
         
-        # ЛОГИКА ДАТЫ: если нет due_at → сегодня в 12:00
         if task.due_at:
             event_time = task.due_at
             if event_time.hour == 0 and event_time.minute == 0:
