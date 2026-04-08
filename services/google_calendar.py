@@ -94,14 +94,12 @@ async def _get_creds_from_db(user_id: str):
         
         try:
             creds_info = json.loads(user_auth.creds)
-            creds = Credentials(
-                token=creds_info.get('token'),
-                refresh_token=creds_info.get('refresh_token'),
-                token_uri=creds_info.get('token_uri'),
-                client_id=creds_info.get('client_id'),
-                client_secret=creds_info.get('client_secret'),
-                scopes=creds_info.get('scopes', [])
-            )
+            
+            # 🔥 ФИКС: если после loads() получили строку (старый формат) — парсим ещё раз
+            if isinstance(creds_info, str):
+                creds_info = json.loads(creds_info)
+            
+            creds = Credentials.from_authorized_user_info(creds_info, SCOPES)
             
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
@@ -112,7 +110,7 @@ async def _get_creds_from_db(user_id: str):
                     'token_uri': creds.token_uri,
                     'client_id': creds.client_id,
                     'client_secret': creds.client_secret,
-                    'scopes': list(creds.scopes)
+                    'scopes': list(creds.scopes) if creds.scopes else []
                 }
                 user_auth.creds = json.dumps(updated_info)
                 await session.commit()
