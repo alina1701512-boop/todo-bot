@@ -110,3 +110,46 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "running", "db": "ok"}
+
+# ================= 📅 GOOGLE OAUTH CALLBACK =================
+@app.get("/callback")
+async def google_oauth_callback(request: Request):
+    """Принимает код от Google после авторизации"""
+    from urllib.parse import parse_qs, urlparse
+    
+    query_params = parse_qs(urlparse(str(request.url)).query)
+    code = query_params.get("code", [None])[0]
+    error = query_params.get("error", [None])[0]
+    
+    if error:
+        return f"""
+        <html>
+            <body style="font-family: Arial; padding: 40px; text-align: center;">
+                <h1 style="color: #d32f2f;">❌ Ошибка авторизации</h1>
+                <p>Error: {error}</p>
+                <p>Попробуй ещё раз: <code>/connect_google</code></p>
+            </body>
+        </html>
+        """
+    
+    if code:
+        return f"""
+        <html>
+            <body style="font-family: Arial; padding: 40px; text-align: center; background: #f5f5f5;">
+                <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                    <h1 style="color: #388e3c;">✅ Авторизация успешна!</h1>
+                    <p style="color: #666; margin: 20px 0;">Скопируй этот код и отправь боту в Telegram:</p>
+                    <div style="background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 20px 0; font-family: monospace; font-size: 14px; word-break: break-all;">
+                        /connect_google {code}
+                    </div>
+                    <p style="color: #999; font-size: 14px;">Или просто скопируй код:</p>
+                    <div style="background: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; font-family: monospace; font-size: 12px; word-break: break-all;">
+                        {code}
+                    </div>
+                    <p style="color: #666; margin-top: 30px;"> Открой Telegram и отправь код боту</p>
+                </div>
+            </body>
+        </html>
+        """
+    
+    return "<html><body><h1>No code received</h1></body></html>"
