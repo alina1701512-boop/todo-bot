@@ -32,7 +32,7 @@ def _get_flow():
                 "client_secret": CLIENT_SECRET,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["urn:ietf:wg:oauth:2.0:oob"]
+                "redirect_uris": ["http://localhost:8080/"]  # 🔥 Заменили на localhost
             }
         },
         SCOPES
