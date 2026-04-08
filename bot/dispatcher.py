@@ -142,12 +142,13 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
     
-    for t in page_tasks:
-        icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-        short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
-        due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
-        cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
-        kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
+  for t in page_tasks:
+    icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+    # 🔥 Убираем обрезание - показываем весь текст
+    short = t.title  # теперь полный текст
+    due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
+    cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
+    kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
 
     nav = []
     if page_offset > 0: 
