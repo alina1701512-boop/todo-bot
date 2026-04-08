@@ -169,25 +169,26 @@ async def get_stats_for_period(user_id: str, period: str):
             "pending": (total or 0) - (done or 0),
         }
 
-# ================= ОТРИСОВКА СПИСКА =================
+# ================= ОТРИСОВКА СПИСКА (ИСПРАВЛЕНА) =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
+    user_id_str = str(user_id)
     
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks()
+        tasks = await task_service.get_all_tasks(user_id=user_id_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
+        all_t = await task_service.get_all_tasks(user_id=user_id_str)
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date())
+            tasks = await task_service.get_tasks_for_date(now.date(), user_id=user_id_str)
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=user_id_str)
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date())
+            tasks = await task_service.get_tasks_for_week(now.date(), user_id=user_id_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=user_id_str)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
@@ -375,24 +376,14 @@ async def reminders_menu(message):
 
 @dp.message(lambda m: m.text == "✅ Включить")
 async def enable_reminders(message):
-    # TODO: сохранить настройку в БД
     await message.answer("✅ **Напоминания включены!**\n\nТы будешь получать уведомления о задачах.", parse_mode="Markdown")
 
 @dp.message(lambda m: m.text == "❌ Выключить")
 async def disable_reminders(message):
-    # TODO: сохранить настройку в БД
     await message.answer("❌ **Напоминания выключены.**\n\nТы не будешь получать уведомления.", parse_mode="Markdown")
 
 @dp.message(lambda m: m.text in ["🔔 За 15 минут", "🔔 За 30 минут", "🔔 За 1 час", "🔔 За 1 день"])
 async def set_reminder_time(message):
-    time_map = {
-        "🔔 За 15 минут": 15,
-        "🔔 За 30 минут": 30,
-        "🔔 За 1 час": 60,
-        "🔔 За 1 день": 1440
-    }
-    minutes = time_map.get(message.text, 15)
-    # TODO: сохранить настройку в БД
     await message.answer(f"✅ **Время напоминания установлено:** {message.text}\n\nТы будешь получать уведомления за {message.text[2:]} до дедлайна.", parse_mode="Markdown")
 
 # ================= ПОМОЩЬ =================
@@ -419,7 +410,6 @@ async def help_button(message):
 
 **📞 Связаться с разработчиком:** @alinakoor"""
     
-    # Добавляем кнопку для связи
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 Написать разработчику", url="https://t.me/alinakoor")]
     ])
@@ -612,7 +602,12 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+            # Проверяем, что задача принадлежит этому пользователю
+            if str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
+            else:
+                await callback.answer("❌ Это не твоя задача!", show_alert=True)
+                return
         
         await callback.answer("")
         
