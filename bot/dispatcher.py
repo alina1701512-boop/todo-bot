@@ -34,7 +34,7 @@ def get_main_menu_keyboard():
 def get_settings_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Google Calendar")],
-        [KeyboardButton(text="🔔 Напоминания"), KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="❓ Помощ�")],
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
@@ -42,14 +42,6 @@ def get_google_calendar_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="🔌 Подключить"), KeyboardButton(text="🔌 Отключить")],
         [KeyboardButton(text="📋 Статус")],
-        [KeyboardButton(text="🔙 Назад")]
-    ], resize_keyboard=True)
-
-def get_reminders_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="✅ Включить"), KeyboardButton(text="❌ Выключить")],
-        [KeyboardButton(text="🔔 За 15 минут"), KeyboardButton(text="🔔 За 30 минут")],
-        [KeyboardButton(text="🔔 За 1 час"), KeyboardButton(text="🔔 За 1 день")],
         [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
