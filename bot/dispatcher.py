@@ -202,7 +202,8 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     
     # Корректируем page_offset
     if total > 0:
-        max_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+        max_page = (total - 1) // ITEMS_PER_PAGE
+        max_offset = max_page * ITEMS_PER_PAGE
         if page_offset > max_offset:
             page_offset = max_offset
     if page_offset < 0:
@@ -220,14 +221,13 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     # Пустой список
     if total == 0:
         text = "📋 Задач нет"
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]])
         if is_edit:
             try:
-                await message.edit_text(text, reply_markup=kb)
+                await message.edit_text(text)
             except TelegramBadRequest:
-                await message.answer(text, reply_markup=kb)
+                await message.answer(text)
         else:
-            await message.answer(text, reply_markup=kb)
+            await message.answer(text)
         return
 
     # Пагинация
@@ -259,9 +259,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         nav.append(InlineKeyboardButton(text="Вперед ▶️", callback_data="page_next"))
     if nav:
         kb.append(nav)
-    
-    # Добавляем кнопку обновления
-    kb.append([InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")])
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
@@ -272,7 +269,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e):
-            # Игнорируем ошибку "сообщение не изменено"
             pass
         else:
             logger.error(f"❌ Edit failed: {e}")
@@ -580,14 +576,6 @@ async def google_status(message: types.Message):
         await message.answer("⚪️ **Google Calendar не подключен**\n\nНапиши `/connect_google`")
         
 # ================= КОЛБЭККИ =================
-@dp.callback_query(lambda c: c.data == "refresh")
-async def refresh_list(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
-    await callback.answer()
-
 @dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback):
     ctx = user_context.get(callback.from_user.id)
