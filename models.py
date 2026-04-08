@@ -16,6 +16,15 @@ class Task(Base):
     is_reminded = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_archived = Column(Boolean, default=False)
+
+# ================= 🔐 GOOGLE AUTH =================
+class UserGoogleAuth(Base):
+    """Хранит токены доступа к Google Calendar для каждого пользователя"""
+    __tablename__ = "user_google_auth"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)  # Telegram user_id
+    creds = Column(Text)  # JSON-строка с токенами (access + refresh)
     
     # 🔥 НОВОЕ ПОЛЕ: ID пользователя
     user_id = Column(String, nullable=True, index=True)  # Telegram user_id (строка)
