@@ -83,7 +83,32 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ФУНКЦИЯ СОРТИРОВКИ =================
+# ================= ФУНКЦИЯ СОРТИРОВКИ (ИСПРАВЛЕНА) =================
+def get_sort_key(task):
+    """Возвращает ключ для сортировки задачи"""
+    # Приоритет: red(0) -> yellow(1) -> green(2) -> none(3) -> done(4)
+    if task.is_done:
+        priority_order = 4
+    else:
+        priority_order = {
+            "red": 0,
+            "yellow": 1,
+            "green": 2,
+            "none": 3
+        }.get(task.priority, 3)
+    
+    # Время: None ставим в конец (используем datetime.max)
+    if task.due_at:
+        # Убеждаемся, что due_at наивный (без часового пояса)
+        if hasattr(task.due_at, 'tzinfo') and task.due_at.tzinfo is not None:
+            due_time = task.due_at.replace(tzinfo=None)
+        else:
+            due_time = task.due_at
+    else:
+        due_time = datetime.max
+    
+    return (priority_order, due_time)
+
 def sort_tasks_by_priority_and_time(tasks):
     """
     Сортирует задачи:
@@ -91,28 +116,7 @@ def sort_tasks_by_priority_and_time(tasks):
     2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
     3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
     """
-    priority_order = {
-        "red": 0,      # 🔴 Срочные - первые
-        "yellow": 1,   # 🟡 Средние - вторые
-        "green": 2,    # 🟢 Лайтовые - третьи
-        "none": 3      # ⚪️ Без приоритета - последние
-    }
-    
-    # Разделяем на выполненные и невыполненные
-    done_tasks = [t for t in tasks if t.is_done]
-    not_done_tasks = [t for t in tasks if not t.is_done]
-    
-    # Сортируем невыполненные по приоритету и времени
-    not_done_tasks.sort(key=lambda t: (
-        priority_order.get(t.priority, 3),           # сначала по приоритету
-        t.due_at if t.due_at else datetime.max       # потом по времени (None в конец)
-    ))
-    
-    # Сортируем выполненные по времени (опционально)
-    done_tasks.sort(key=lambda t: t.due_at if t.due_at else datetime.max)
-    
-    # Возвращаем: сначала невыполненные, потом выполненные
-    return not_done_tasks + done_tasks
+    return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
