@@ -50,3 +50,26 @@ async def migrate_add_user_id():
         logger.info(f"ℹ️ Migration: user_id column likely already exists ({e})")
         async with async_session() as session:
             await session.rollback()
+
+# ================= 🔐 MIGRATION: GOOGLE AUTH TABLE =================
+async def migrate_create_google_auth_table():
+    """Создаёт таблицу user_google_auth, если её нет."""
+    from sqlalchemy import text
+    
+    try:
+        async with async_session() as session:
+            # Создаём таблицу вручную, если не существует
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS user_google_auth (
+                    id SERIAL PRIMARY KEY,
+                    user_id VARCHAR UNIQUE NOT NULL,
+                    creds TEXT
+                );
+                CREATE INDEX IF NOT EXISTS ix_user_google_auth_user_id ON user_google_auth (user_id);
+            """))
+            await session.commit()
+            logger.info("✅ Migration: Table 'user_google_auth' created or already exists")
+    except Exception as e:
+        logger.error(f"❌ Migration error: {e}")
+        async with async_session() as session:
+            await session.rollback()
