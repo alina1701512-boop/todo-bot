@@ -8,52 +8,45 @@ logger = logging.getLogger(__name__)
 
 # ================= СОЗДАНИЕ =================
 async def create_task(title: str, due_at, priority: str = "none", repeat_rule: str = "none", user_id: str = None) -> Task:
-    from sqlalchemy.exc import InterfaceError
-    
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            async with async_session() as session:
-                task = Task(
-                    title=title, 
-                    due_at=due_at, 
-                    priority=priority, 
-                    repeat_rule=repeat_rule,
-                    created_at=datetime.utcnow(),
-                    user_id=str(user_id) if user_id else None
-                )
-                session.add(task)
-                await session.commit()
-                await session.refresh(task)
-                
-                # Авто-синхронизация с Google Calendar
-                if user_id:
-                    try:
-                        from services.google_calendar import sync_task_to_calendar
-                        await sync_task_to_calendar(user_id, task)
-                    except ImportError:
-                        logger.warning("⚠️ google_calendar module not found, skipping sync")
-                    except Exception as e:
-                        logger.error(f"❌ Calendar sync failed: {e}")
-                
-                return task
-        except InterfaceError as e:
-            if "connection is closed" in str(e) and attempt < max_retries - 1:
-                logger.warning(f"⚠️ DB connection closed, retry {attempt + 1}/{max_retries}")
-                import asyncio
-                await asyncio.sleep(0.5)  # Ждём полсекунды перед повтором
-                continue
-            raise  # Если не помогло — пробрасываем ошибку дальше
+    async with async_session() as session:
+        task = Task(
+            title=title, 
+            due_at=due_at, 
+            priority=priority, 
+            repeat_rule=repeat_rule,
+            created_at=datetime.utcnow(),
+            user_id=str(user_id) if user_id else None
+        )
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+        
+        # Авто-синхронизация с Google Calendar
+        if user_id:
+            try:
+                from services.google_calendar import sync_task_to_calendar
+                await sync_task_to_calendar(user_id, task)
+            except ImportError:
+                logger.warning("⚠️ google_calendar module not found, skipping sync")
+            except Exception as e:
+                logger.error(f"❌ Calendar sync failed: {e}")
+        
+        return task
 
-# ================= ПОЛУЧЕНИЕ =================
 # ================= ПОЛУЧЕНИЕ =================
 async def get_all_tasks(user_id: str = None):
     async with async_session() as session:
         stmt = select(Task).where(Task.is_archived == False)
-        # 🔥 УБРАЛИ ФИЛЬТР по user_id
+        if user_id:
+            stmt = stmt.where(Task.user_id == str(user_id))
         stmt = stmt.order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
         res = await session.execute(stmt)
         return res.scalars().all()
+
+async def get_task_by_id(task_id: int):  # 🔥 ЭТА ФУНКЦИЯ БЫЛА УТЕРЯНА — ВОЗВРАЩАЕМ
+    async with async_session() as session:
+        res = await session.execute(select(Task).where(Task.id == task_id))
+        return res.scalar_one_or_none()
 
 async def get_tasks_for_date(target_date: date, user_id: str = None):
     async with async_session() as session:
@@ -61,7 +54,8 @@ async def get_tasks_for_date(target_date: date, user_id: str = None):
             Task.is_archived == False,
             func.date(Task.due_at) == target_date
         )
-        # 🔥 УБРАЛИ ФИЛЬТР по user_id
+        if user_id:
+            stmt = stmt.where(Task.user_id == str(user_id))
         stmt = stmt.order_by(Task.due_at)
         res = await session.execute(stmt)
         return res.scalars().all()
@@ -74,7 +68,8 @@ async def get_tasks_for_week(start_date: date, user_id: str = None):
             func.date(Task.due_at) >= start_date,
             func.date(Task.due_at) <= end_date
         )
-        # 🔥 УБРАЛИ ФИЛЬТР по user_id
+        if user_id:
+            stmt = stmt.where(Task.user_id == str(user_id))
         stmt = stmt.order_by(Task.due_at)
         res = await session.execute(stmt)
         return res.scalars().all()
@@ -99,13 +94,8 @@ async def delete_task(task_id: int):
             return True
     return False
 
-# ================= ОЧИСТКА (00:00 МСК) =================
+# ================= ОЧИСТКА =================
 async def cleanup_old_tasks():
-    """
-    1. Выполненные -> Скрывает (is_archived=True)
-    2. Просроченные -> Переносит на завтра
-    3. Не-красные старше 30 дней -> Скрывает
-    """
     async with async_session() as session:
         stmt = select(Task).where(Task.is_archived == False)
         res = await session.execute(stmt)
@@ -118,19 +108,16 @@ async def cleanup_old_tasks():
         for t in tasks:
             age = now - t.created_at
             
-            # 1. Выполненные -> Скрыть
             if t.is_done:
                 t.is_archived = True
                 archived_count += 1
                 continue
 
-            # 2. Просроченные -> Перенести на завтра
             if t.due_at and t.due_at < now:
                 tomorrow = now.date() + timedelta(days=1)
                 t.due_at = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59)
                 moved_count += 1
 
-            # 3. Старше 30 дней (кроме красных) -> Скрыть
             if age.days > 30 and t.priority != "red":
                 t.is_archived = True
                 archived_count += 1
@@ -138,9 +125,8 @@ async def cleanup_old_tasks():
         await session.commit()
         logger.info(f"🧹 Cleanup done: Moved {moved_count}, Archived {archived_count}")
 
-# ================= АНАЛИТИКА /STATS =================
+# ================= СТАТИСТИКА =================
 async def get_task_stats(user_id: str = None) -> dict:
-    """Возвращает статистику. Если передан user_id — только для этого пользователя."""
     async with async_session() as session:
         now = datetime.utcnow()
         base_conditions = [Task.is_archived == False]
@@ -172,16 +158,11 @@ async def get_task_stats(user_id: str = None) -> dict:
 
 # ================= НАПОМИНАНИЯ =================
 async def send_reminders(bot):
-    """
-    Отправляет уведомления за 1 час и за 15 минут до дедлайна.
-    Принимает экземпляр bot, чтобы избежать циклических импортов.
-    """
     now = datetime.utcnow()
     one_hour_later = now + timedelta(hours=1)
     fifteen_min_later = now + timedelta(minutes=15)
     
     async with async_session() as session:
-        # Задачи через 1 час
         stmt_1h = select(Task).where(
             Task.is_done == False,
             Task.is_archived == False,
@@ -193,7 +174,6 @@ async def send_reminders(bot):
         res_1h = await session.execute(stmt_1h)
         tasks_1h = res_1h.scalars().all()
         
-        # Задачи через 15 минут
         stmt_15m = select(Task).where(
             Task.is_done == False,
             Task.is_archived == False,
