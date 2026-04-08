@@ -4,7 +4,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 from aiogram.exceptions import TelegramBadRequest
 import re
 import logging
-import httpx  # ← Добавить сюда, рядом с другими импортами
+import httpx
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
@@ -83,31 +83,66 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
+# ================= ФУНКЦИЯ СОРТИРОВКИ =================
+def sort_tasks_by_priority_and_time(tasks):
+    """
+    Сортирует задачи:
+    1. Выполненные - в конец
+    2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
+    3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
+    """
+    priority_order = {
+        "red": 0,      # 🔴 Срочные - первые
+        "yellow": 1,   # 🟡 Средние - вторые
+        "green": 2,    # 🟢 Лайтовые - третьи
+        "none": 3      # ⚪️ Без приоритета - последние
+    }
+    
+    # Разделяем на выполненные и невыполненные
+    done_tasks = [t for t in tasks if t.is_done]
+    not_done_tasks = [t for t in tasks if not t.is_done]
+    
+    # Сортируем невыполненные по приоритету и времени
+    not_done_tasks.sort(key=lambda t: (
+        priority_order.get(t.priority, 3),           # сначала по приоритету
+        t.due_at if t.due_at else datetime.max       # потом по времени (None в конец)
+    ))
+    
+    # Сортируем выполненные по времени (опционально)
+    done_tasks.sort(key=lambda t: t.due_at if t.due_at else datetime.max)
+    
+    # Возвращаем: сначала невыполненные, потом выполненные
+    return not_done_tasks + done_tasks
+
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
     
-    # 🔥 УБРАЛИ передачу user_id в функции
+    # Получаем задачи
     if filter_type == "all": 
-        all_tasks = await task_service.get_all_tasks()
+        tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks()
-        all_tasks = [t for t in all_t if t.priority == filter_val]
+        tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            all_tasks = await task_service.get_tasks_for_date(now.date())
+            tasks = await task_service.get_tasks_for_date(now.date())
         elif filter_val == "Завтра": 
-            all_tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
         elif filter_val == "📆 Неделя": 
-            all_tasks = await task_service.get_tasks_for_week(now.date())
+            tasks = await task_service.get_tasks_for_week(now.date())
         elif filter_val == "🗓️ Месяц":
             all_t = await task_service.get_all_tasks()
             end = now.date() + timedelta(days=30)
-            all_tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
-        else: all_tasks = []
-    else: all_tasks = []
-
+            tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
+        else: 
+            tasks = []
+    else: 
+        tasks = []
+    
+    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
+    all_tasks = sort_tasks_by_priority_and_time(tasks)
     total = len(all_tasks)
     
     if page_offset >= total and total > 0: 
@@ -142,18 +177,27 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
     
-    for t in page_tasks:  # ← 4 пробела перед for
-        icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-        short = t.title  # ← 8 пробелов (один отступ)
+    for t in page_tasks:
+        # Иконка статуса + приоритета
+        if t.is_done:
+            icon = "✅"
+        else:
+            priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+            icon = priority_icon
+        
+        # Полный текст задачи (не обрезаем)
+        task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
-        kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])  # ← 8 пробелов
+        
+        # Формируем кнопку: иконка слева, затем текст, затем дата
+        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
-    nav = []  # ← 4 пробела
+    nav = []
     if page_offset > 0: 
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
     if page_offset + ITEMS_PER_PAGE < total: 
-        nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
+        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
     if nav: 
         kb.append(nav)
 
@@ -223,7 +267,7 @@ async def enter_ai_mode(message):
 ])
 async def handle_text(message):
     uid = message.from_user.id
-    uid_str = str(uid)  # 🔥 Для БД
+    uid_str = str(uid)
     state = user_context.setdefault(uid, {})
     text = message.text.strip()
 
@@ -246,7 +290,6 @@ async def handle_text(message):
     if due_at and hasattr(due_at, 'tzinfo') and due_at.tzinfo is not None:
         due_at = due_at.replace(tzinfo=None)
 
-    # 🔥 Создаём задачу с user_id
     task = await task_service.create_task(title, due_at, priority, user_id=uid_str)
     emoji = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(priority, "⚪️")
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
@@ -287,22 +330,18 @@ async def handle_voice(message: types.Message):
     await message.answer("🎧 Слушаю...")
     
     try:
-        # 🔥 ИСПРАВЛЕНО: используем bot.get_file() вместо message.bot.get_file()
         file = await bot.get_file(message.voice.file_id)
         file_path = file.file_path
         
-        # Скачиваем контент через HTTPX
         async with httpx.AsyncClient() as client:
             download_url = f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}"
             response = await client.get(download_url, timeout=30.0)
             audio_bytes = response.content
         
-        # Отправляем в Whisper
         from services.ai_parser import transcribe_voice
         text = await transcribe_voice(audio_bytes)
         
         if text:
-            # Создаём фейковое сообщение и передаём в handle_text
             fake_message = types.Message(
                 message_id=message.message_id,
                 from_user=message.from_user,
@@ -332,7 +371,6 @@ async def connect_google(message: types.Message):
     parts = message.text.split()
     
     if len(parts) > 1:
-        # Пользователь отправил код
         code = parts[1]
         await message.answer("🔄 Проверяю код...")
         
@@ -348,7 +386,6 @@ async def connect_google(message: types.Message):
         else:
             await message.answer("❌ Ошибка при проверке кода. Попробуй ещё раз.")
     else:
-        # Отправляем ссылку для авторизации
         try:
             url = await get_auth_url(user_id)
             await message.answer(
@@ -436,15 +473,12 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            # 🔥 Убрали проверку user_id, которая блокировала выполнение
             await task_service.update_task(tid, is_done=not task.is_done)
         
         await callback.answer("")
         
-        # Безопасное получение контекста
         ctx = user_context.get(uid, {})
         
-        # Обновляем список задач
         if ctx.get("title"):
             await show_task_list(
                 callback.message,
