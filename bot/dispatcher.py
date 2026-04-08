@@ -420,11 +420,7 @@ async def help_button(message):
 
 **💡 Советы:**
 • Нажми на задачу — отметится галочкой ✅ и уйдет в конец списка
-• Напиши "срочно" — поставлю красный приоритет
-
----
-
-**📞 Связаться с разработчиком:** @alinakoor"""
+• Напиши "срочно" — поставлю красный приоритет"""
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📱 Написать разработчику", url="https://t.me/alinakoor")]
