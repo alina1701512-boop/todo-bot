@@ -10,9 +10,6 @@ from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
 from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
-from database import async_session
-from sqlalchemy import select, func
-from models import Task
 
 logger = logging.getLogger(__name__)
 user_context = {}
@@ -27,29 +24,7 @@ def get_main_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📋 Все задачи")],
         [KeyboardButton(text="🤖 AI Чат")],
-        [KeyboardButton(text="🔥 Важность"), KeyboardButton(text="📅 Период")],
-        [KeyboardButton(text="⚙️ Меню")]
-    ], resize_keyboard=True)
-
-def get_settings_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Google Calendar")],
-        [KeyboardButton(text="❓ Помощь")],
-        [KeyboardButton(text="🔙 Назад")]
-    ], resize_keyboard=True)
-
-def get_google_calendar_menu_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="🔌 Подключить"), KeyboardButton(text="🔌 Отключить")],
-        [KeyboardButton(text="📋 Статус")],
-        [KeyboardButton(text="🔙 Назад")]
-    ], resize_keyboard=True)
-
-def get_stats_period_keyboard():
-    return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📊 За неделю"), KeyboardButton(text="📊 За месяц")],
-        [KeyboardButton(text="📊 За год")],
-        [KeyboardButton(text="🔙 Назад")]
+        [KeyboardButton(text="🔥 Важность"), KeyboardButton(text="📅 Период")]
     ], resize_keyboard=True)
 
 def get_priority_menu_keyboard():
@@ -108,8 +83,10 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ФУНКЦИЯ СОРТИРОВКИ =================
+# ================= ФУНКЦИЯ СОРТИРОВКИ (ИСПРАВЛЕНА) =================
 def get_sort_key(task):
+    """Возвращает ключ для сортировки задачи"""
+    # Приоритет: red(0) -> yellow(1) -> green(2) -> none(3) -> done(4)
     if task.is_done:
         priority_order = 4
     else:
@@ -120,7 +97,9 @@ def get_sort_key(task):
             "none": 3
         }.get(task.priority, 3)
     
+    # Время: None ставим в конец (используем datetime.max)
     if task.due_at:
+        # Убеждаемся, что due_at наивный (без часового пояса)
         if hasattr(task.due_at, 'tzinfo') and task.due_at.tzinfo is not None:
             due_time = task.due_at.replace(tzinfo=None)
         else:
@@ -131,55 +110,34 @@ def get_sort_key(task):
     return (priority_order, due_time)
 
 def sort_tasks_by_priority_and_time(tasks):
+    """
+    Сортирует задачи:
+    1. Выполненные - в конец
+    2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
+    3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
+    """
     return sorted(tasks, key=get_sort_key)
-
-# ================= СТАТИСТИКА С ПЕРИОДАМИ =================
-async def get_stats_for_period(user_id: str, period: str):
-    now = datetime.utcnow()
-    
-    if period == "week":
-        start_date = now - timedelta(days=7)
-    elif period == "month":
-        start_date = now - timedelta(days=30)
-    elif period == "year":
-        start_date = now - timedelta(days=365)
-    else:
-        start_date = None
-    
-    async with async_session() as session:
-        base_conditions = [Task.is_archived == False, Task.user_id == str(user_id)]
-        if start_date:
-            base_conditions.append(Task.created_at >= start_date)
-        
-        total = await session.scalar(select(func.count(Task.id)).where(*base_conditions))
-        done = await session.scalar(select(func.count(Task.id)).where(*base_conditions, Task.is_done == True))
-        
-        return {
-            "total": total or 0,
-            "done": done or 0,
-            "pending": (total or 0) - (done or 0),
-        }
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    user_id_str = str(user_id)
     
+    # Получаем задачи
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks(user_id=user_id_str)
+        tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks(user_id=user_id_str)
+        all_t = await task_service.get_all_tasks()
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date(), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_date(now.date())
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date(), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_week(now.date())
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks(user_id=user_id_str)
+            all_t = await task_service.get_all_tasks()
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
@@ -187,6 +145,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: 
         tasks = []
     
+    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
     all_tasks = sort_tasks_by_priority_and_time(tasks)
     total = len(all_tasks)
     
@@ -223,16 +182,20 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     kb = []
     
     for t in page_tasks:
+        # Иконка статуса + приоритета
         if t.is_done:
             icon = "✅"
         else:
-            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+            priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+            icon = priority_icon
         
+        # Полный текст задачи (не обрезаем)
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         
-        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | {due}", callback_data=cb)])
+        # Формируем кнопку: иконка слева, затем текст, затем дата
+        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
     nav = []
     if page_offset > 0: 
@@ -258,135 +221,17 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
 
-# ================= ПРИВЕТСТВЕННОЕ СООБЩЕНИЕ =================
-def get_welcome_message():
-    return """👋 **Привет! Я твой AI-планировщик.**
-
-Я помогаю управлять задачами, напоминаю о дедлайнах и синхронизирую с Google Календарём.
-
----
-
-📌 **Как добавлять задачи:**
-Просто напиши текст — я сам пойму дату и важность. Формат: (текст задачи, дата и срочность) 
-пример: `приготовить ужин завтра в 19:00 красный`
-
----
-
-📋 **Мои кнопки:**
-
-**Основные:**
-📋 Все задачи — показать список дел
-🤖 AI Чат — поговорить с искусственным интеллектом
-🔥 Важность — фильтр по приоритетам
-📅 Период — фильтр по дате
-⚙️ Меню — все настройки
-
----
-
-🎯 **Как работают приоритеты:**
-🔴 Срочные — вверху списка
-🟡 Средние — посередине
-🟢 Лайтовые — внизу
-✅ Выполненные — уходят в конец
-
----
-
-💡 **Советы:**
-• Нажми на задачу — отметится галочкой ✅ и уйдет в конец списка
-• Напиши "срочно" — поставлю красный приоритет
-
-Приятного использования! 🚀"""
-
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
 async def cmd_start(message): 
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
-    await message.answer(get_welcome_message(), parse_mode="Markdown", reply_markup=get_main_menu_keyboard())
+    await message.answer("👋 Привет! Я твой AI-планировщик.", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔙 Назад")
 async def go_back(message): 
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("🔙 Главное меню:", reply_markup=get_main_menu_keyboard())
 
-@dp.message(lambda m: m.text == "⚙️ Меню")
-async def settings_menu(message):
-    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
-    await message.answer("⚙️ **Настройки и информация:**", parse_mode="Markdown", reply_markup=get_settings_menu_keyboard())
-
-# ================= СТАТИСТИКА =================
-@dp.message(lambda m: m.text == "📊 Статистика")
-async def stats_menu(message):
-    await message.answer("📊 **Выбери период для статистики:**", parse_mode="Markdown", reply_markup=get_stats_period_keyboard())
-
-@dp.message(lambda m: m.text in ["📊 За неделю", "📊 За месяц", "📊 За год"])
-async def show_stats_period(message):
-    uid_str = str(message.from_user.id)
-    period_map = {
-        "📊 За неделю": "week",
-        "📊 За месяц": "month", 
-        "📊 За год": "year"
-    }
-    period = period_map.get(message.text, "week")
-    
-    await message.answer("📊 **Готовлю статистику...**")
-    
-    stats = await get_stats_for_period(uid_str, period)
-    period_name = {"week": "неделю", "month": "месяц", "year": "год"}.get(period, "неделю")
-    
-    completion = (stats['done'] / stats['total'] * 100) if stats['total'] > 0 else 0
-    
-    text = (f"📊 **Статистика за {period_name}:**\n\n"
-            f"📦 **Всего задач:** {stats['total']}\n"
-            f"✅ **Выполнено:** {stats['done']}\n"
-            f"⏳ **В работе:** {stats['pending']}\n\n"
-            f"📈 **Прогресс:** {completion:.1f}%")
-    
-    await message.answer(text, parse_mode="Markdown")
-
-# ================= GOOGLE CALENDAR =================
-@dp.message(lambda m: m.text == "📅 Google Calendar")
-async def google_menu(message):
-    await message.answer("📅 **Управление Google Calendar:**", parse_mode="Markdown", reply_markup=get_google_calendar_menu_keyboard())
-
-@dp.message(lambda m: m.text == "🔌 Подключить")
-async def connect_google_button(message):
-    await connect_google(message)
-
-@dp.message(lambda m: m.text == "🔌 Отключить")
-async def disconnect_google_button(message):
-    await disconnect_google(message)
-
-@dp.message(lambda m: m.text == "📋 Статус")
-async def google_status_button(message):
-    await google_status(message)
-
-# ================= ПОМОЩЬ =================
-@dp.message(lambda m: m.text == "❓ Помощь")
-async def help_button(message):
-    help_text = """👋 **Помощь по боту**
-
-**📌 Как добавлять задачи:**
-Просто напиши текст — я сам пойму дату и важность. Формат: (текст задачи, дата и срочность) 
-пример: `приготовить ужин завтра в 19:00 красный`
-
-**🎯 Кнопки меню:**
-📋 Все задачи — показать список
-🤖 AI Чат — поговорить с ИИ
-🔥 Важность — фильтр по приоритетам
-📅 Период — фильтр по дате
-⚙️ Меню — все настройки
-
-**💡 Советы:**
-• Нажми на задачу — отметится галочкой ✅ и уйдет в конец списка
-• Напиши "срочно" — поставлю красный приоритет"""
-    
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 Написать разработчику", url="https://t.me/alinakoor")]
-    ])
-    
-    await message.answer(help_text, parse_mode="Markdown", reply_markup=kb)
-
-# ================= ОСТАЛЬНЫЕ КНОПКИ =================
 @dp.message(lambda m: m.text == "🔥 Важность")
 async def priority_menu(message): 
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
@@ -422,9 +267,7 @@ async def enter_ai_mode(message):
 # 📝 ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА
 @dp.message(lambda m: m.text and not m.text.startswith('/') and m.text not in [
     "📋 Все задачи", "🔥 Важность", "📅 Период", "🔙 Назад", "🤖 AI Чат",
-    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые", "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц",
-    "⚙️ Меню", "📊 Статистика", "📅 Google Calendar", "❓ Помощь",
-    "📊 За неделю", "📊 За месяц", "📊 За год", "🔌 Подключить", "🔌 Отключить", "📋 Статус",
+    "🔴 Срочные", "🟡 Средние", "🟢 Лайтовые", "Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"
 ])
 async def handle_text(message):
     uid = message.from_user.id
@@ -461,23 +304,71 @@ async def handle_text(message):
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
 
-# ================= СТАТИСТИКА /stats =================
+# ================= 📊 СТАТИСТИКА /stats =================
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
-    await stats_menu(message)
+    uid_str = str(message.from_user.id)
+    await message.answer("📊 **Готовлю статистику...**")
+    
+    stats = await task_service.get_task_stats(user_id=uid_str)
+    completion = (stats['done'] / stats['total'] * 100) if stats['total'] > 0 else 0
+    
+    text = (f"📊 **Твоя статистика:**\n\n"
+            f"📦 **Всего задач:** {stats['total']}\n"
+            f"✅ **Выполнено:** {stats['done']}\n"
+            f"⏳ **В работе:** {stats['pending']}\n"
+            f"🔴 **Просрочено:** {stats['overdue']}\n\n"
+            f"📈 **Прогресс:** {completion:.1f}%\n\n"
+            f"**По приоритетам:**\n"
+            f"🔴 Срочные: {stats['red']}\n"
+            f"🟡 Средние: {stats['yellow']}\n"
+            f"🟢 Лайтовые: {stats['green']}\n")
+    
+    await message.answer(text, parse_mode="Markdown")
 
-# ================= ГОЛОСОВЫЕ СООБЩЕНИЯ =================
+# ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
 @dp.message(lambda m: m.voice)
 async def handle_voice(message: types.Message):
-    await message.answer("🎤 Голосовые задачи временно отключены. Пожалуйста, напишите текст.")
-
-# ================= GOOGLE CALENDAR COMMANDS =================
+    """Принимает голосовые сообщения, распознаёт и создаёт задачу."""
+    uid = message.from_user.id
+    await message.answer("🎧 Слушаю...")
+    
+    try:
+        file = await bot.get_file(message.voice.file_id)
+        file_path = file.file_path
+        
+        async with httpx.AsyncClient() as client:
+            download_url = f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}"
+            response = await client.get(download_url, timeout=30.0)
+            audio_bytes = response.content
+        
+        from services.ai_parser import transcribe_voice
+        text = await transcribe_voice(audio_bytes)
+        
+        if text:
+            fake_message = types.Message(
+                message_id=message.message_id,
+                from_user=message.from_user,
+                date=message.date,
+                chat=message.chat,
+                text=text
+            )
+            await handle_text(fake_message)
+        else:
+            await message.answer("❌ Не удалось распознать речь. Попробуйте ещё раз или напишите текстом.")
+            
+    except Exception as e:
+        logger.error(f"❌ Voice handler error: {e}")
+        await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
+        
+# ================= 📅 GOOGLE CALENDAR COMMANDS =================
 @dp.message(Command("connect_google"))
 async def connect_google(message: types.Message):
+    """Начинает процесс подключения к Google Calendar"""
     try:
         from services.google_calendar import get_auth_url
     except ImportError:
-        await message.answer("❌ Модуль Google Calendar не найден.")
+        await message.answer("❌ Модуль Google Calendar не найден. Проверьте установку.")
         return
     
     user_id = message.from_user.id
@@ -491,24 +382,30 @@ async def connect_google(message: types.Message):
         success = await save_code(user_id, code)
         
         if success:
-            await message.answer("✅ **Google Календарь подключен!**")
+            await message.answer(
+                "✅ **Google Календарь подключен!**\n\n"
+                "📅 Теперь все новые задачи будут автоматически добавляться в твой календарь.\n"
+                "Задачи без даты появятся сегодня в 12:00."
+            )
         else:
-            await message.answer("❌ Ошибка при проверке кода.")
+            await message.answer("❌ Ошибка при проверке кода. Попробуй ещё раз.")
     else:
         try:
             url = await get_auth_url(user_id)
             await message.answer(
                 f"📅 **Подключение Google Calendar**\n\n"
-                f"**1.** Перейди по ссылке:\n{url}\n\n"
-                f"**2.** Скопируй код и отправь:\n"
-                f"`/connect_google КОД`"
+                f"**1.** Перейди по ссылке и разреши доступ:\n{url}\n\n"
+                f"**2.** Скопируй полученный код и отправь его мне:\n"
+                f"`/connect_google ТВОЙ_КОД`\n\n"
+                f"Пример: `/connect_google 4/0Aea...`"
             )
         except Exception as e:
             logger.error(f"Google auth error: {e}")
-            await message.answer("❌ Ошибка при генерации ссылки.")
+            await message.answer("❌ Ошибка при генерации ссылки. Проверь GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET в Render.")
 
 @dp.message(Command("disconnect_google"))
 async def disconnect_google(message: types.Message):
+    """Отключает Google Calendar"""
     try:
         from services.google_calendar import disconnect_google as google_disconnect
     except ImportError:
@@ -517,24 +414,33 @@ async def disconnect_google(message: types.Message):
     
     success = await google_disconnect(message.from_user.id)
     if success:
-        await message.answer("🗑️ **Google Calendar отключен**")
+        await message.answer("🗑️ **Google Calendar отключен**\nТвои задачи больше не будут синхронизироваться.")
     else:
-        await message.answer("⚠️ Не удалось отключить.")
+        await message.answer("⚠️ Не удалось отключить. Попробуй ещё раз.")
 
 @dp.message(Command("google_status"))
 async def google_status(message: types.Message):
+    """Проверяет статус подключения к Google Calendar"""
     try:
         from services.google_calendar import _get_creds_from_db
     except ImportError:
         await message.answer("❌ Модуль не найден.")
         return
     
-    creds = await _get_creds_from_db(message.from_user.id)
+    user_id = message.from_user.id
+    creds = await _get_creds_from_db(user_id)
     
     if creds:
-        await message.answer("✅ **Google Calendar подключен**")
+        await message.answer(
+            "✅ **Google Calendar подключен**\n\n"
+            "📅 Все новые задачи автоматически добавляются в календарь.\n"
+            "Задачи без даты → сегодня в 12:00"
+        )
     else:
-        await message.answer("⚪️ **Google Calendar не подключен**\n\nНапиши `/connect_google`")
+        await message.answer(
+            "⚪️ **Google Calendar не подключен**\n\n"
+            "Напиши `/connect_google`, чтобы начать синхронизацию."
+        )
         
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
@@ -542,7 +448,7 @@ async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
@@ -571,11 +477,7 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            if str(task.user_id) == str(uid):
-                await task_service.update_task(tid, is_done=not task.is_done)
-            else:
-                await callback.answer("❌ Это не твоя задача!", show_alert=True)
-                return
+            await task_service.update_task(tid, is_done=not task.is_done)
         
         await callback.answer("")
         
