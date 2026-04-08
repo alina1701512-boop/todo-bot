@@ -46,19 +46,14 @@ async def create_task(title: str, due_at, priority: str = "none", repeat_rule: s
             raise  # Если не помогло — пробрасываем ошибку дальше
 
 # ================= ПОЛУЧЕНИЕ =================
+# ================= ПОЛУЧЕНИЕ =================
 async def get_all_tasks(user_id: str = None):
     async with async_session() as session:
         stmt = select(Task).where(Task.is_archived == False)
-        if user_id:
-            stmt = stmt.where(Task.user_id == str(user_id))  # 🔥 Фильтр
+        # 🔥 УБРАЛИ ФИЛЬТР по user_id
         stmt = stmt.order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
         res = await session.execute(stmt)
         return res.scalars().all()
-
-async def get_task_by_id(task_id: int):
-    async with async_session() as session:
-        res = await session.execute(select(Task).where(Task.id == task_id))
-        return res.scalar_one_or_none()
 
 async def get_tasks_for_date(target_date: date, user_id: str = None):
     async with async_session() as session:
@@ -66,8 +61,7 @@ async def get_tasks_for_date(target_date: date, user_id: str = None):
             Task.is_archived == False,
             func.date(Task.due_at) == target_date
         )
-        if user_id:
-            stmt = stmt.where(Task.user_id == str(user_id))  # 🔥 Фильтр
+        # 🔥 УБРАЛИ ФИЛЬТР по user_id
         stmt = stmt.order_by(Task.due_at)
         res = await session.execute(stmt)
         return res.scalars().all()
@@ -80,8 +74,7 @@ async def get_tasks_for_week(start_date: date, user_id: str = None):
             func.date(Task.due_at) >= start_date,
             func.date(Task.due_at) <= end_date
         )
-        if user_id:
-            stmt = stmt.where(Task.user_id == str(user_id))  # 🔥 Фильтр
+        # 🔥 УБРАЛИ ФИЛЬТР по user_id
         stmt = stmt.order_by(Task.due_at)
         res = await session.execute(stmt)
         return res.scalars().all()
