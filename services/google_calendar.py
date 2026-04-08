@@ -3,13 +3,13 @@ import json
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import urlencode
 
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
-# 🔥 Импортируем из config вместо os.environ
 from config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TZ, APP_HOST
 from database import async_session
 from models import UserGoogleAuth
@@ -19,28 +19,66 @@ logger = logging.getLogger(__name__)
 
 # Настройки
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
-CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
-TZ = ZoneInfo(os.environ.get("TZ", "Europe/Moscow"))
 
-# ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
+# ================= ОСНОВНЫЕ ФУНКЦИИ =================
 
-def _get_flow():
-    """Создаёт OAuth flow для авторизации"""
-    return InstalledAppFlow.from_client_config(
-        {
-            "web": {
-                "client_id": GOOGLE_CLIENT_ID,
-                "client_secret": GOOGLE_CLIENT_SECRET,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": [
-                    f"{APP_HOST}/callback"  # 🔥 Динамический URL
-                ]
-            }
-        },
-        SCOPES
-    )
+async def get_auth_url(user_id: str) -> str:
+    """Генерирует ссылку для авторизации пользователя"""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise ValueError("Google credentials not configured")
+    
+    # Формируем URL вручную с правильным redirect_uri
+    params = {
+        'client_id': GOOGLE_CLIENT_ID,
+        'redirect_uri': f"{APP_HOST}/callback",
+        'response_type': 'code',
+        'scope': ' '.join(SCOPES),
+        'access_type': 'offline',
+        'prompt': 'consent',
+    }
+    
+    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    return auth_url
+
+async def save_code(user_id: str, code: str) -> bool:
+    """Сохраняет токен после получения кода от пользователя"""
+    try:
+        # Создаем flow с правильным redirect_uri
+        flow = Flow.from_client_config(
+            {
+                "web": {
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "client_secret": GOOGLE_CLIENT_SECRET,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": [f"{APP_HOST}/callback"]
+                }
+            },
+            scopes=SCOPES,
+            redirect_uri=f"{APP_HOST}/callback"
+        )
+        
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        async with async_session() as session:
+            result = await session.execute(
+                select(UserGoogleAuth).where(UserGoogleAuth.user_id == str(user_id))
+            )
+            user_auth = result.scalar_one_or_none()
+            
+            if not user_auth:
+                user_auth = UserGoogleAuth(user_id=str(user_id))
+                session.add(user_auth)
+            
+            user_auth.creds = json.dumps(creds.to_json())
+            await session.commit()
+            
+        logger.info(f"✅ Google auth saved for user {user_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to save Google auth: {e}")
+        return False
 
 async def _get_creds_from_db(user_id: str):
     """Получает и обновляет токен из базы данных"""
@@ -68,47 +106,6 @@ async def _get_creds_from_db(user_id: str):
         except Exception as e:
             logger.error(f"❌ Token error for user {user_id}: {e}")
             return None
-
-# ================= ОСНОВНЫЕ ФУНКЦИИ =================
-
-async def get_auth_url(user_id: str) -> str:
-    """Генерирует ссылку для авторизации пользователя"""
-    if not CLIENT_ID or not CLIENT_SECRET:
-        raise ValueError("Google credentials not configured")
-    
-    flow = _get_flow()
-    auth_url, _ = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent'
-    )
-    return auth_url
-
-async def save_code(user_id: str, code: str) -> bool:
-    """Сохраняет токен после получения кода от пользователя"""
-    try:
-        flow = _get_flow()
-        flow.fetch_token(code=code)
-        creds = flow.credentials
-        
-        async with async_session() as session:
-            result = await session.execute(
-                select(UserGoogleAuth).where(UserGoogleAuth.user_id == str(user_id))
-            )
-            user_auth = result.scalar_one_or_none()
-            
-            if not user_auth:
-                user_auth = UserGoogleAuth(user_id=str(user_id))
-                session.add(user_auth)
-            
-            user_auth.creds = json.dumps(creds.to_json())
-            await session.commit()
-            
-        logger.info(f"✅ Google auth saved for user {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to save Google auth: {e}")
-        return False
 
 async def disconnect_google(user_id: str) -> bool:
     """Удаляет привязку к Google аккаунту"""
