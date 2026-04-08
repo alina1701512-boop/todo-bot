@@ -406,14 +406,43 @@ async def page_prev(callback):
 
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
 async def handle_task_click(callback):
-    uid = callback.from_user.id
-    tid = int(callback.data.split("_")[1])
-    task = await task_service.get_task_by_id(tid)
-    if task: await task_service.update_task(tid, is_done=not task.is_done)
-    await callback.answer("")
-    ctx = user_context.get(uid)
-    if ctx:
-        try:
-            await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
-        except Exception as e:
-            logger.error(f"❌ Edit failed: {e}")
+    try:
+        uid = callback.from_user.id
+        tid = int(callback.data.split("_")[1])
+        
+        task = await task_service.get_task_by_id(tid)
+        if task:
+            # Проверяем принадлежность задачи (опционально, но полезно)
+            if task.user_id and task.user_id != str(uid):
+                await callback.answer("⚠️ Это не ваша задача!", show_alert=True)
+                return
+            await task_service.update_task(tid, is_done=not task.is_done)
+        
+        await callback.answer("")
+        
+        # 🔥 Безопасное получение контекста с .get()
+        ctx = user_context.get(uid, {})
+        
+        # Если контекст есть — обновляем список
+        if ctx and ctx.get("title"):
+            await show_task_list(
+                callback.message, 
+                ctx.get("title", "Все задачи"), 
+                ctx.get("type", "all"), 
+                ctx.get("val"), 
+                is_edit=True, 
+                page_offset=ctx.get("offset", 0)
+            )
+        else:
+            # Если контекста нет — показываем все задачи с начала
+            await show_task_list(
+                callback.message, 
+                "Все задачи", 
+                "all", 
+                None, 
+                is_edit=True, 
+                page_offset=0
+            )
+    except Exception as e:
+        logger.error(f"❌ handle_task_click error: {e}")
+        await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
