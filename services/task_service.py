@@ -253,57 +253,7 @@ async def get_task_stats(user_id: str = None) -> dict:
                 }
             await asyncio.sleep(0.5)
 
-# ================= НАПОМИНАНИЯ =================
+# ================= НАПОМИНАНИЯ (ВРЕМЕННО ОТКЛЮЧЕНЫ) =================
 async def send_reminders(bot):
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            async with async_session() as session:
-                await session.execute("SELECT 1")
-                now = datetime.utcnow()
-                one_hour_later = now + timedelta(hours=1)
-                fifteen_min_later = now + timedelta(minutes=15)
-                
-                stmt_1h = select(Task).where(
-                    Task.is_done == False,
-                    Task.is_archived == False,
-                    Task.is_reminded == False,
-                    Task.due_at <= one_hour_later,
-                    Task.due_at > now,
-                    Task.user_id.isnot(None)
-                )
-                res_1h = await session.execute(stmt_1h)
-                tasks_1h = res_1h.scalars().all()
-                
-                stmt_15m = select(Task).where(
-                    Task.is_done == False,
-                    Task.is_archived == False,
-                    Task.is_reminded == False,
-                    Task.due_at <= fifteen_min_later,
-                    Task.due_at > now,
-                    Task.user_id.isnot(None)
-                )
-                res_15m = await session.execute(stmt_15m)
-                tasks_15m = res_15m.scalars().all()
-                
-                all_to_remind = tasks_1h + tasks_15m
-                
-                for task in all_to_remind:
-                    try:
-                        time_left = "⏳ Осталось ~1 час" if task in tasks_1h else "⏳ Осталось ~15 минут"
-                        await bot.send_message(
-                            chat_id=int(task.user_id),
-                            text=f"🔔 **Напоминание!**\n\n📝 {task.title}\n🕐 Дедлайн: {task.due_at.strftime('%d.%m в %H:%M')}\n{time_left}",
-                            parse_mode="Markdown"
-                        )
-                        task.is_reminded = True
-                        await session.commit()
-                    except Exception as e:
-                        logger.error(f"❌ Reminder failed for task {task.id}: {e}")
-                        await session.rollback()
-                return
-        except Exception as e:
-            logger.error(f"❌ Send reminders attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries - 1:
-                return
-            await asyncio.sleep(1)
+    # Отключено для отладки
+    pass
