@@ -136,7 +136,7 @@ async def google_oauth_callback(request: Request):
         return f"""
         <html>
             <body style="font-family: Arial; padding: 40px; text-align: center; background: #f5f5f5;">
-                <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <div style="max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px;">
                     <h1 style="color: #388e3c;">✅ Авторизация успешна!</h1>
                     <p style="color: #666; margin: 20px 0;">Скопируй этот код и отправь боту в Telegram:</p>
                     <div style="background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 20px 0; font-family: monospace; font-size: 14px; word-break: break-all;">
@@ -146,7 +146,6 @@ async def google_oauth_callback(request: Request):
                     <div style="background: #f5f5f5; padding: 15px; border-radius: 4px; margin: 20px 0; font-family: monospace; font-size: 12px; word-break: break-all;">
                         {code}
                     </div>
-                    <p style="color: #666; margin-top: 30px;"> Открой Telegram и отправь код боту</p>
                 </div>
             </body>
         </html>
