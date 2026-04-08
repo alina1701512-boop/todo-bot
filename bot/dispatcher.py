@@ -435,35 +435,31 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            # Проверяем принадлежность задачи (опционально, но полезно)
-            if task.user_id and task.user_id != str(uid):
-                await callback.answer("⚠️ Это не ваша задача!", show_alert=True)
-                return
+            # 🔥 Убрали проверку user_id, которая блокировала выполнение
             await task_service.update_task(tid, is_done=not task.is_done)
         
         await callback.answer("")
         
-        # 🔥 Безопасное получение контекста с .get()
+        # Безопасное получение контекста
         ctx = user_context.get(uid, {})
         
-        # Если контекст есть — обновляем список
-        if ctx and ctx.get("title"):
+        # Обновляем список задач
+        if ctx.get("title"):
             await show_task_list(
-                callback.message, 
-                ctx.get("title", "Все задачи"), 
-                ctx.get("type", "all"), 
-                ctx.get("val"), 
-                is_edit=True, 
+                callback.message,
+                ctx.get("title", "Все задачи"),
+                ctx.get("type", "all"),
+                ctx.get("val"),
+                is_edit=True,
                 page_offset=ctx.get("offset", 0)
             )
         else:
-            # Если контекста нет — показываем все задачи с начала
             await show_task_list(
-                callback.message, 
-                "Все задачи", 
-                "all", 
-                None, 
-                is_edit=True, 
+                callback.message,
+                "Все задачи",
+                "all",
+                None,
+                is_edit=True,
                 page_offset=0
             )
     except Exception as e:
