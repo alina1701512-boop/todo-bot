@@ -568,7 +568,7 @@ async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
