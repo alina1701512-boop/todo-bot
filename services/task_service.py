@@ -157,6 +157,7 @@ async def get_task_stats(user_id: str = None) -> dict:
             "none": p_counts.get("none", 0)
         }
 
-# ================= НАПОМИНАНИЯ (УДАЛЕНЫ) =================
-# async def send_reminders(bot):
-#     pass
+# ================= НАПОМИНАНИЯ (ОТКЛЮЧЕНЫ) =================
+async def send_reminders(bot):
+    # Напоминания временно отключены
+    pass
