@@ -10,6 +10,9 @@ from zoneinfo import ZoneInfo
 from config import TG_TOKEN, TZ
 from services import task_service
 from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
+from database import async_session
+from sqlalchemy import select, func
+from models import Task
 
 logger = logging.getLogger(__name__)
 user_context = {}
