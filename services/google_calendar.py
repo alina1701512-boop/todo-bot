@@ -1,9 +1,7 @@
-import os
 import json
 import logging
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from urllib.parse import urlencode
 
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -17,13 +15,11 @@ from sqlalchemy import select, delete
 
 logger = logging.getLogger(__name__)
 
-# Настройки
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 async def get_auth_url(user_id: str) -> str:
-    """Генерирует ссылку для авторизации пользователя"""
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-        raise ValueError("Google credentials not configured")
+    """Генерирует ссылку для авторизации"""
+    from urllib.parse import urlencode
     
     params = {
         'client_id': GOOGLE_CLIENT_ID,
@@ -34,13 +30,11 @@ async def get_auth_url(user_id: str) -> str:
         'prompt': 'consent',
     }
     
-    auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    return auth_url
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
 async def save_code(user_id: str, code: str) -> bool:
-    """Сохраняет токен после получения кода от пользователя"""
+    """Сохраняет токен после получения кода"""
     try:
-        # Создаем flow
         flow = Flow.from_client_config(
             {
                 "web": {
@@ -55,18 +49,17 @@ async def save_code(user_id: str, code: str) -> bool:
             redirect_uri=f"{APP_HOST}/callback"
         )
         
-        # Получаем токен
         flow.fetch_token(code=code)
         creds = flow.credentials
         
-        # Сохраняем токен в правильном формате
-        creds_dict = {
+        # 🔥 Правильно сохраняем токен
+        creds_info = {
             'token': creds.token,
             'refresh_token': creds.refresh_token,
             'token_uri': creds.token_uri,
             'client_id': creds.client_id,
             'client_secret': creds.client_secret,
-            'scopes': creds.scopes
+            'scopes': list(creds.scopes)
         }
         
         async with async_session() as session:
@@ -79,8 +72,7 @@ async def save_code(user_id: str, code: str) -> bool:
                 user_auth = UserGoogleAuth(user_id=str(user_id))
                 session.add(user_auth)
             
-            # Сохраняем как JSON строку
-            user_auth.creds = json.dumps(creds_dict)
+            user_auth.creds = json.dumps(creds_info)
             await session.commit()
             
         logger.info(f"✅ Google auth saved for user {user_id}")
@@ -90,7 +82,7 @@ async def save_code(user_id: str, code: str) -> bool:
         return False
 
 async def _get_creds_from_db(user_id: str):
-    """Получает и обновляет токен из базы данных"""
+    """Получает и обновляет токен из БД"""
     async with async_session() as session:
         result = await session.execute(
             select(UserGoogleAuth).where(UserGoogleAuth.user_id == str(user_id))
@@ -101,24 +93,28 @@ async def _get_creds_from_db(user_id: str):
             return None
         
         try:
-            # Парсим JSON
-            creds_dict = json.loads(user_auth.creds)
-            
-            # Создаем объект Credentials
-            creds = Credentials.from_authorized_user_info(creds_dict, SCOPES)
+            creds_info = json.loads(user_auth.creds)
+            creds = Credentials(
+                token=creds_info.get('token'),
+                refresh_token=creds_info.get('refresh_token'),
+                token_uri=creds_info.get('token_uri'),
+                client_id=creds_info.get('client_id'),
+                client_secret=creds_info.get('client_secret'),
+                scopes=creds_info.get('scopes', [])
+            )
             
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                # Обновляем в базе
-                updated_dict = {
+                # Обновляем токен в БД
+                updated_info = {
                     'token': creds.token,
                     'refresh_token': creds.refresh_token,
                     'token_uri': creds.token_uri,
                     'client_id': creds.client_id,
                     'client_secret': creds.client_secret,
-                    'scopes': creds.scopes
+                    'scopes': list(creds.scopes)
                 }
-                user_auth.creds = json.dumps(updated_dict)
+                user_auth.creds = json.dumps(updated_info)
                 await session.commit()
                 logger.info(f"🔄 Token refreshed for user {user_id}")
             
@@ -128,7 +124,7 @@ async def _get_creds_from_db(user_id: str):
             return None
 
 async def disconnect_google(user_id: str) -> bool:
-    """Удаляет привязку к Google аккаунту"""
+    """Отключает Google аккаунт"""
     try:
         async with async_session() as session:
             stmt = delete(UserGoogleAuth).where(UserGoogleAuth.user_id == str(user_id))
