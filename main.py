@@ -12,7 +12,6 @@ from sqlalchemy import text
 from database import init_db, async_session, migrate_add_user_id, migrate_create_google_auth_table
 from config import TG_TOKEN, APP_HOST, TZ
 from bot.dispatcher import dp, bot
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from services import task_service
 
 # Настройка логирования
@@ -20,8 +19,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
-scheduler = AsyncIOScheduler()
-MSK_TZ = ZoneInfo("Europe/Moscow")
+
+# ================= НАПОМИНАНИЯ ВРЕМЕННО ОТКЛЮЧЕНЫ =================
+# Планировщик пока не запускаем
+# scheduler = AsyncIOScheduler()
+# MSK_TZ = ZoneInfo("Europe/Moscow")
 
 # 🔥 ФУНКЦИЯ МИГРАЦИИ (добавляет user_id, если нет)
 async def migrate_add_user_id():
@@ -36,7 +38,7 @@ async def migrate_add_user_id():
         async with async_session() as session:
             await session.rollback()
 
-@app.on_event("startup")  # ← Вот она, функция startup! 🎯
+@app.on_event("startup")
 async def startup():
     logger.info("🚀 Starting application...")
     logger.info(f"📍 APP_HOST: {APP_HOST}")
@@ -50,48 +52,26 @@ async def startup():
         raise
     
     # 2. 🔥 Миграции
-    await migrate_add_user_id()  # ← уже была
-    await migrate_create_google_auth_table()  # ← 🔥 НОВАЯ: создаёт таблицу для Google Auth
+    await migrate_add_user_id()
+    await migrate_create_google_auth_table()
     
     # 3. Установка вебхука Telegram
     try:
         webhook_url = f"{APP_HOST}/webhook/telegram"
         await bot.set_webhook(webhook_url, allowed_updates=dp.resolve_used_update_types())
-        logger.info(f"🤖 Telegram webhook set")
+        logger.info(f"🤖 Telegram webhook set to {webhook_url}")
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # ================= ПЛАНИРОВЩИК ЗАДАЧ =================
-    
-    # Задача 1: Ежедневная очистка в 00:00 МСК
-    # scheduler.add_job(
-        task_service.cleanup_old_tasks, 
-        "cron", 
-        hour=0, 
-        minute=0, 
-        timezone=MSK_TZ, 
-        id="daily_cleanup", 
-        replace_existing=True
-    )
-    
-    # Задача 2: 🔔 Напоминания каждые 15 минут
-    # scheduler.add_job(
-        task_service.send_reminders, 
-        "interval", 
-        minutes=15, 
-        args=[bot],  
-        id="send_reminders", 
-        replace_existing=True
-    )
-    
-    # scheduler.start()
-    logger.info("⏰ Scheduler started: Cleanup at 00:00 MSK, Reminders every 15 min")
+    # ================= ПЛАНИРОВЩИК ЗАДАЧ (ВРЕМЕННО ОТКЛЮЧЕН) =================
+    # Напоминания отключены для отладки
+    logger.info("⏰ Reminders are DISABLED (temporarily)")
 
 @app.on_event("shutdown")
 async def shutdown():
-    """Корректно останавливает планировщик при выключении сервера."""
-    logger.info("🛑 Shutting down scheduler...")
-    scheduler.shutdown()
+    """Корректно останавливает сервер."""
+    logger.info("🛑 Shutting down...")
+    await bot.session.close()
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
