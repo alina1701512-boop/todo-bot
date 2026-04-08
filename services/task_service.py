@@ -20,6 +20,19 @@ async def create_task(title: str, due_at, priority: str = "none", repeat_rule: s
         session.add(task)
         await session.commit()
         await session.refresh(task)
+        
+        # 🔥 АВТО-СИНХРОНИЗАЦИЯ С GOOGLE CALENDAR
+        # Импортируем внутри функции, чтобы избежать циклических импортов
+        if user_id:
+            try:
+                from services.google_calendar import sync_task_to_calendar
+                await sync_task_to_calendar(user_id, task)
+            except ImportError:
+                logger.warning("⚠️ google_calendar module not found, skipping sync")
+            except Exception as e:
+                logger.error(f"❌ Calendar sync failed: {e}")
+                # Не прерываем создание задачи, если календарь не работает
+        
         return task
 
 # ================= ПОЛУЧЕНИЕ =================
