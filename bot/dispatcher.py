@@ -294,6 +294,88 @@ async def handle_voice(message: types.Message):
     except Exception as e:
         logger.error(f"❌ Voice handler error: {e}")
         await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
+# ================= 📅 GOOGLE CALENDAR COMMANDS =================
+@dp.message(Command("connect_google"))
+async def connect_google(message: types.Message):
+    """Начинает процесс подключения к Google Calendar"""
+    try:
+        from services.google_calendar import get_auth_url
+    except ImportError:
+        await message.answer("❌ Модуль Google Calendar не найден. Проверьте установку.")
+        return
+    
+    user_id = message.from_user.id
+    parts = message.text.split()
+    
+    if len(parts) > 1:
+        # Пользователь отправил код
+        code = parts[1]
+        await message.answer("🔄 Проверяю код...")
+        
+        from services.google_calendar import save_code
+        success = await save_code(user_id, code)
+        
+        if success:
+            await message.answer(
+                "✅ **Google Календарь подключен!**\n\n"
+                "📅 Теперь все новые задачи будут автоматически добавляться в твой календарь.\n"
+                "Задачи без даты появятся сегодня в 12:00."
+            )
+        else:
+            await message.answer("❌ Ошибка при проверке кода. Попробуй ещё раз.")
+    else:
+        # Отправляем ссылку для авторизации
+        try:
+            url = await get_auth_url(user_id)
+            await message.answer(
+                f"📅 **Подключение Google Calendar**\n\n"
+                f"**1.** Перейди по ссылке и разреши доступ:\n{url}\n\n"
+                f"**2.** Скопируй полученный код и отправь его мне:\n"
+                f"`/connect_google ТВОЙ_КОД`\n\n"
+                f"Пример: `/connect_google 4/0Aea...`"
+            )
+        except Exception as e:
+            logger.error(f"Google auth error: {e}")
+            await message.answer("❌ Ошибка при генерации ссылки. Проверь GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET в Render.")
+
+@dp.message(Command("disconnect_google"))
+async def disconnect_google(message: types.Message):
+    """Отключает Google Calendar"""
+    try:
+        from services.google_calendar import disconnect_google as google_disconnect
+    except ImportError:
+        await message.answer("❌ Модуль не найден.")
+        return
+    
+    success = await google_disconnect(message.from_user.id)
+    if success:
+        await message.answer("🗑️ **Google Calendar отключен**\nТвои задачи больше не будут синхронизироваться.")
+    else:
+        await message.answer("⚠️ Не удалось отключить. Попробуй ещё раз.")
+
+@dp.message(Command("google_status"))
+async def google_status(message: types.Message):
+    """Проверяет статус подключения к Google Calendar"""
+    try:
+        from services.google_calendar import _get_creds_from_db
+    except ImportError:
+        await message.answer("❌ Модуль не найден.")
+        return
+    
+    user_id = message.from_user.id
+    creds = await _get_creds_from_db(user_id)
+    
+    if creds:
+        await message.answer(
+            "✅ **Google Calendar подключен**\n\n"
+            "📅 Все новые задачи автоматически добавляются в календарь.\n"
+            "Задачи без даты → сегодня в 12:00"
+        )
+    else:
+        await message.answer(
+            "⚪️ **Google Calendar не подключен**\n\n"
+            "Напиши `/connect_google`, чтобы начать синхронизацию."
+        )
         
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
