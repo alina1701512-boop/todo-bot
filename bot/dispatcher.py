@@ -287,8 +287,8 @@ async def handle_voice(message: types.Message):
     await message.answer("🎧 Слушаю...")
     
     try:
-        # 🔥 ПРАВИЛЬНЫЙ СПОСОБ: скачиваем файл через message.bot
-        file = await message.bot.get_file(message.voice.file_id)
+        # 🔥 ИСПРАВЛЕНО: используем bot.get_file() вместо message.bot.get_file()
+        file = await bot.get_file(message.voice.file_id)
         file_path = file.file_path
         
         # Скачиваем контент через HTTPX
@@ -317,6 +317,7 @@ async def handle_voice(message: types.Message):
     except Exception as e:
         logger.error(f"❌ Voice handler error: {e}")
         await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
+        
 # ================= 📅 GOOGLE CALENDAR COMMANDS =================
 @dp.message(Command("connect_google"))
 async def connect_google(message: types.Message):
