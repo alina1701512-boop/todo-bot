@@ -64,7 +64,7 @@ async def startup():
     # ================= ПЛАНИРОВЩИК ЗАДАЧ =================
     
     # Задача 1: Ежедневная очистка в 00:00 МСК
-    scheduler.add_job(
+    # scheduler.add_job(
         task_service.cleanup_old_tasks, 
         "cron", 
         hour=0, 
@@ -75,7 +75,7 @@ async def startup():
     )
     
     # Задача 2: 🔔 Напоминания каждые 15 минут
-    scheduler.add_job(
+    # scheduler.add_job(
         task_service.send_reminders, 
         "interval", 
         minutes=15, 
@@ -84,7 +84,7 @@ async def startup():
         replace_existing=True
     )
     
-    scheduler.start()
+    # scheduler.start()
     logger.info("⏰ Scheduler started: Cleanup at 00:00 MSK, Reminders every 15 min")
 
 @app.on_event("shutdown")
