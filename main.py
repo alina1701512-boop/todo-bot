@@ -8,7 +8,8 @@ from fastapi.responses import JSONResponse
 from aiogram.types import Update
 from sqlalchemy import text
 
-from database import init_db, async_session
+# 🔥 Добавили новую функцию миграции в импорт
+from database import init_db, async_session, migrate_add_user_id, migrate_create_google_auth_table
 from config import TG_TOKEN, APP_HOST, TZ
 from bot.dispatcher import dp, bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -31,12 +32,11 @@ async def migrate_add_user_id():
             await session.commit()
             logger.info("✅ Migration: Added user_id column to tasks table")
     except Exception as e:
-        # Если колонка уже есть — это нормально, просто логируем
         logger.info(f"ℹ️ Migration: user_id column likely already exists ({e})")
         async with async_session() as session:
             await session.rollback()
 
-@app.on_event("startup")
+@app.on_event("startup")  # ← Вот она, функция startup! 🎯
 async def startup():
     logger.info("🚀 Starting application...")
     logger.info(f"📍 APP_HOST: {APP_HOST}")
@@ -49,8 +49,9 @@ async def startup():
         logger.error(f"❌ Database error: {e}")
         raise
     
-    # 2. 🔥 Запуск миграции (добавит user_id для мультипользовательского режима)
-    await migrate_add_user_id()
+    # 2. 🔥 Миграции
+    await migrate_add_user_id()  # ← уже была
+    await migrate_create_google_auth_table()  # ← 🔥 НОВАЯ: создаёт таблицу для Google Auth
     
     # 3. Установка вебхука Telegram
     try:
@@ -74,7 +75,6 @@ async def startup():
     )
     
     # Задача 2: 🔔 Напоминания каждые 15 минут
-    # Важно: передаём экземпляр bot через args, чтобы функция могла отправлять сообщения
     scheduler.add_job(
         task_service.send_reminders, 
         "interval", 
