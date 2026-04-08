@@ -58,15 +58,20 @@ async def migrate_create_google_auth_table():
     
     try:
         async with async_session() as session:
-            # Создаём таблицу вручную, если не существует
+            # 🔥 Команда 1: Создаём таблицу (отдельный запрос)
             await session.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_google_auth (
                     id SERIAL PRIMARY KEY,
                     user_id VARCHAR UNIQUE NOT NULL,
                     creds TEXT
-                );
-                CREATE INDEX IF NOT EXISTS ix_user_google_auth_user_id ON user_google_auth (user_id);
+                )
             """))
+            
+            # 🔥 Команда 2: Создаём индекс (отдельный запрос)
+            await session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_user_google_auth_user_id ON user_google_auth (user_id)
+            """))
+            
             await session.commit()
             logger.info("✅ Migration: Table 'user_google_auth' created or already exists")
     except Exception as e:
