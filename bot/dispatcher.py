@@ -23,12 +23,11 @@ dp = Dispatcher()
 ITEMS_PER_PAGE = 8
 
 # ================= КЛАВИАТУРЫ =================
-def get_main_menu_keyboard():
+def get_settings_menu_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton(text="📋 Все задачи")],
-        [KeyboardButton(text="🤖 AI Чат")],
-        [KeyboardButton(text="🔥 Важность"), KeyboardButton(text="📅 Период")],
-        [KeyboardButton(text="⚙️ Меню")]
+        [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📅 Google Calendar")],
+        [KeyboardButton(text="❓ Помощь")],
+        [KeyboardButton(text="🔙 Назад")]
     ], resize_keyboard=True)
 
 def get_settings_menu_keyboard():
