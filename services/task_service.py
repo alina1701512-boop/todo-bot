@@ -8,32 +8,42 @@ logger = logging.getLogger(__name__)
 
 # ================= СОЗДАНИЕ =================
 async def create_task(title: str, due_at, priority: str = "none", repeat_rule: str = "none", user_id: str = None) -> Task:
-    async with async_session() as session:
-        task = Task(
-            title=title, 
-            due_at=due_at, 
-            priority=priority, 
-            repeat_rule=repeat_rule,
-            created_at=datetime.utcnow(),
-            user_id=str(user_id) if user_id else None  # 🔥 Привязка к пользователю
-        )
-        session.add(task)
-        await session.commit()
-        await session.refresh(task)
-        
-        # 🔥 АВТО-СИНХРОНИЗАЦИЯ С GOOGLE CALENDAR
-        # Импортируем внутри функции, чтобы избежать циклических импортов
-        if user_id:
-            try:
-                from services.google_calendar import sync_task_to_calendar
-                await sync_task_to_calendar(user_id, task)
-            except ImportError:
-                logger.warning("⚠️ google_calendar module not found, skipping sync")
-            except Exception as e:
-                logger.error(f"❌ Calendar sync failed: {e}")
-                # Не прерываем создание задачи, если календарь не работает
-        
-        return task
+    from sqlalchemy.exc import InterfaceError
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            async with async_session() as session:
+                task = Task(
+                    title=title, 
+                    due_at=due_at, 
+                    priority=priority, 
+                    repeat_rule=repeat_rule,
+                    created_at=datetime.utcnow(),
+                    user_id=str(user_id) if user_id else None
+                )
+                session.add(task)
+                await session.commit()
+                await session.refresh(task)
+                
+                # Авто-синхронизация с Google Calendar
+                if user_id:
+                    try:
+                        from services.google_calendar import sync_task_to_calendar
+                        await sync_task_to_calendar(user_id, task)
+                    except ImportError:
+                        logger.warning("⚠️ google_calendar module not found, skipping sync")
+                    except Exception as e:
+                        logger.error(f"❌ Calendar sync failed: {e}")
+                
+                return task
+        except InterfaceError as e:
+            if "connection is closed" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"⚠️ DB connection closed, retry {attempt + 1}/{max_retries}")
+                import asyncio
+                await asyncio.sleep(0.5)  # Ждём полсекунды перед повтором
+                continue
+            raise  # Если не помогло — пробрасываем ошибку дальше
 
 # ================= ПОЛУЧЕНИЕ =================
 async def get_all_tasks(user_id: str = None):
