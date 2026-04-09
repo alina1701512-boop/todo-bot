@@ -104,16 +104,14 @@ async def cleanup_old_tasks():
         
         now = datetime.utcnow()
         moved_count = 0
-        deleted_count = 0
+        archived_count = 0
         
         for t in tasks:
             age = now - t.created_at
             
             if t.is_done:
-                # Выполненные задачи через 30 дней - удаляем
-                if age.days > 30:
-                    await session.delete(t)
-                    deleted_count += 1
+                t.is_archived = True
+                archived_count += 1
                 continue
 
             if t.due_at and t.due_at < now:
@@ -122,11 +120,11 @@ async def cleanup_old_tasks():
                 moved_count += 1
 
             if age.days > 30 and t.priority != "red":
-                await session.delete(t)
-                deleted_count += 1
+                t.is_archived = True
+                archived_count += 1
                 
         await session.commit()
-        logger.info(f"🧹 Cleanup done: Moved {moved_count}, Deleted {deleted_count}")
+        logger.info(f"🧹 Cleanup done: Moved {moved_count}, Archived {archived_count}")
 
 # ================= СТАТИСТИКА =================
 async def get_task_stats(user_id: str = None) -> dict:
