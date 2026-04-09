@@ -99,7 +99,7 @@ async def telegram_webhook(request: Request):
 async def root():
     return {"status": "Todo Bot is running"}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health():
     return {"status": "running", "db": "ok"}
 
