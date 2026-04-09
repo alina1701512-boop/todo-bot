@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aiogram.types import Update
 from sqlalchemy import text
+from apscheduler.schedulers.asyncio import AsyncIOScheduler  # ← ДОБАВИТЬ
 
 # 🔥 Добавили новую функцию миграции в импорт
 from database import init_db, async_session, migrate_add_user_id, migrate_create_google_auth_table
@@ -20,10 +21,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# ================= НАПОМИНАНИЯ ВРЕМЕННО ОТКЛЮЧЕНЫ =================
-# Планировщик пока не запускаем
-# scheduler = AsyncIOScheduler()
-# MSK_TZ = ZoneInfo("Europe/Moscow")
+# ================= ПЛАНИРОВЩИК =================
+scheduler = AsyncIOScheduler()
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 # 🔥 ФУНКЦИЯ МИГРАЦИИ (добавляет user_id, если нет)
 async def migrate_add_user_id():
@@ -63,14 +63,26 @@ async def startup():
     except Exception as e:
         logger.error(f"❌ Telegram webhook error: {e}")
 
-    # ================= ПЛАНИРОВЩИК ЗАДАЧ (ВРЕМЕННО ОТКЛЮЧЕН) =================
-    # Напоминания отключены для отладки
-    logger.info("⏰ Reminders are DISABLED (temporarily)")
+    # ================= ПЛАНИРОВЩИК ЗАДАЧ =================
+    # Ежедневная очистка в 00:00 MSK
+    scheduler.add_job(
+        task_service.cleanup_old_tasks,
+        "cron",
+        hour=0,
+        minute=0,
+        timezone=MSK_TZ,
+        id="daily_cleanup",
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info("⏰ Scheduler started: Cleanup at 00:00 MSK")
 
 @app.on_event("shutdown")
 async def shutdown():
     """Корректно останавливает сервер."""
-    logger.info("🛑 Shutting down...")
+    logger.info("🛑 Shutting down scheduler...")
+    scheduler.shutdown()
+    logger.info("🛑 Shutting down bot...")
     await bot.session.close()
 
 @app.post("/webhook/telegram")
