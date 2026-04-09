@@ -83,23 +83,14 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ФУНКЦИЯ СОРТИРОВКИ (ИСПРАВЛЕНА) =================
+# ================= ФУНКЦИЯ СОРТИРОВКИ =================
 def get_sort_key(task):
-    """Возвращает ключ для сортировки задачи"""
-    # Приоритет: red(0) -> yellow(1) -> green(2) -> none(3) -> done(4)
     if task.is_done:
         priority_order = 4
     else:
-        priority_order = {
-            "red": 0,
-            "yellow": 1,
-            "green": 2,
-            "none": 3
-        }.get(task.priority, 3)
+        priority_order = {"red": 0, "yellow": 1, "green": 2, "none": 3}.get(task.priority, 3)
     
-    # Время: None ставим в конец (используем datetime.max)
     if task.due_at:
-        # Убеждаемся, что due_at наивный (без часового пояса)
         if hasattr(task.due_at, 'tzinfo') and task.due_at.tzinfo is not None:
             due_time = task.due_at.replace(tzinfo=None)
         else:
@@ -110,18 +101,12 @@ def get_sort_key(task):
     return (priority_order, due_time)
 
 def sort_tasks_by_priority_and_time(tasks):
-    """
-    Сортирует задачи:
-    1. Выполненные - в конец
-    2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
-    3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
-    """
     return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    uid_str = str(user_id)  # 🔥 Приводим к строке для БД
+    uid_str = str(user_id)
     
     # 🔥 Загрузка задач С ФИЛЬТРОМ ПО user_id
     if filter_type == "all": 
@@ -293,7 +278,6 @@ async def show_stats(message: types.Message):
 # ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
 @dp.message(lambda m: m.voice)
 async def handle_voice(message: types.Message):
-    """Принимает голосовые сообщения, распознаёт и создаёт задачу."""
     uid = message.from_user.id
     await message.answer("🎧 Слушаю...")
     
@@ -328,11 +312,10 @@ async def handle_voice(message: types.Message):
 # ================= 📅 GOOGLE CALENDAR COMMANDS =================
 @dp.message(Command("connect_google"))
 async def connect_google(message: types.Message):
-    """Начинает процесс подключения к Google Calendar"""
     try:
         from services.google_calendar import get_auth_url
     except ImportError:
-        await message.answer("❌ Модуль Google Calendar не найден. Проверьте установку.")
+        await message.answer("❌ Модуль Google Calendar не найден.")
         return
     
     user_id = message.from_user.id
@@ -346,30 +329,19 @@ async def connect_google(message: types.Message):
         success = await save_code(user_id, code)
         
         if success:
-            await message.answer(
-                "✅ **Google Календарь подключен!**\n\n"
-                "📅 Теперь все новые задачи будут автоматически добавляться в твой календарь.\n"
-                "Задачи без даты появятся сегодня в 12:00."
-            )
+            await message.answer("✅ **Google Календарь подключен!**\n📅 Все новые задачи будут добавляться в календарь.")
         else:
-            await message.answer("❌ Ошибка при проверке кода. Попробуй ещё раз.")
+            await message.answer("❌ Ошибка при проверке кода.")
     else:
         try:
             url = await get_auth_url(user_id)
-            await message.answer(
-                f"📅 **Подключение Google Calendar**\n\n"
-                f"**1.** Перейди по ссылке и разреши доступ:\n{url}\n\n"
-                f"**2.** Скопируй полученный код и отправь его мне:\n"
-                f"`/connect_google ТВОЙ_КОД`\n\n"
-                f"Пример: `/connect_google 4/0Aea...`"
-            )
+            await message.answer(f"📅 **Подключение Google Calendar**\n\n1. Перейди: {url}\n2. Скопируй код и отправь: `/connect_google КОД`")
         except Exception as e:
             logger.error(f"Google auth error: {e}")
-            await message.answer("❌ Ошибка при генерации ссылки. Проверь GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET в Render.")
+            await message.answer("❌ Ошибка. Проверь GOOGLE_CLIENT_ID и SECRET в Render.")
 
 @dp.message(Command("disconnect_google"))
 async def disconnect_google(message: types.Message):
-    """Отключает Google Calendar"""
     try:
         from services.google_calendar import disconnect_google as google_disconnect
     except ImportError:
@@ -378,41 +350,28 @@ async def disconnect_google(message: types.Message):
     
     success = await google_disconnect(message.from_user.id)
     if success:
-        await message.answer("🗑️ **Google Calendar отключен**\nТвои задачи больше не будут синхронизироваться.")
+        await message.answer("🗑️ **Google Calendar отключен**")
     else:
-        await message.answer("⚠️ Не удалось отключить. Попробуй ещё раз.")
+        await message.answer("⚠️ Не удалось отключить.")
 
 @dp.message(Command("google_status"))
 async def google_status(message: types.Message):
-    """Проверяет статус подключения к Google Calendar"""
     try:
         from services.google_calendar import _get_creds_from_db
     except ImportError:
         await message.answer("❌ Модуль не найден.")
         return
     
-    user_id = message.from_user.id
-    creds = await _get_creds_from_db(user_id)
+    creds = await _get_creds_from_db(message.from_user.id)
     
     if creds:
-        await message.answer(
-            "✅ **Google Calendar подключен**\n\n"
-            "📅 Все новые задачи автоматически добавляются в календарь.\n"
-            "Задачи без даты → сегодня в 12:00"
-        )
+        await message.answer("✅ **Google Calendar подключен**")
     else:
-        await message.answer(
-            "⚪️ **Google Calendar не подключен**\n\n"
-            "Напиши `/connect_google`, чтобы начать синхронизацию."
-        )
-        # ================= 🛠️ ВРЕМЕННАЯ КОМАНДА ОЧИСТКИ =================
+        await message.answer("⚪️ **Не подключен**. Используй /connect_google")
+
+# ================= 🛠️ ВРЕМЕННАЯ КОМАНДА ОЧИСТКИ =================
 @dp.message(Command("admin_cleanup"))
 async def admin_cleanup(message: types.Message):
-    """
-    🔧 УДАЛЯЕТ старые задачи без user_id (ТОЛЬКО ДЛЯ ТЕБЯ!)
-    После использования — УДАЛИ эту команду из кода!
-    """
-    # Проверка: только твой Telegram ID
     if str(message.from_user.id) != "342298611":
         await message.answer("❌ Доступ запрещён")
         return
@@ -422,16 +381,13 @@ async def admin_cleanup(message: types.Message):
     
     try:
         async with async_session() as session:
-            result = await session.execute(
-                text("DELETE FROM tasks WHERE user_id IS NULL")
-            )
+            result = await session.execute(text("DELETE FROM tasks WHERE user_id IS NULL"))
             await session.commit()
             deleted = result.rowcount
         await message.answer(f"✅ Удалено старых задач: {deleted}")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
 
-# ================= КОЛБЭККИ =================
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
@@ -466,13 +422,13 @@ async def handle_task_click(callback):
         tid = int(callback.data.split("_")[1])
         
         task = await task_service.get_task_by_id(tid)
-if task:
-    # 🔥 Проверка: задача принадлежит пользователю
-    if task.user_id is None or str(task.user_id) == str(uid):
-        await task_service.update_task(tid, is_done=not task.is_done)
-    else:
-        await callback.answer("❌ Это не твоя задача!", show_alert=True)
-        return
+        if task:
+            # 🔥 Проверка: задача принадлежит пользователю
+            if task.user_id is None or str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
+            else:
+                await callback.answer("❌ Это не твоя задача!", show_alert=True)
+                return
         
         await callback.answer("")
         
