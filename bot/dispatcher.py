@@ -108,12 +108,12 @@ def get_sort_key(task):
 def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
-# ================= ОТРИСОВКА СПИСКА (С ФИЛЬТРАЦИЕЙ ПО ПОЛЬЗОВАТЕЛЮ) =================
+# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    user_id_str = str(user_id)  # 🔥 ДЛЯ ФИЛЬТРАЦИИ
+    user_id_str = str(user_id)
     
-    # 🔥 ВЕЗДЕ ПЕРЕДАЕМ user_id
+    # Получаем задачи с фильтрацией по пользователю
     if filter_type == "all": 
         tasks = await task_service.get_all_tasks(user_id=user_id_str)
     elif filter_type == "priority":
@@ -144,12 +144,14 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     if page_offset < 0: 
         page_offset = 0
     
+    # Сохраняем контекст с user_id
     user_context.setdefault(user_id, {})
     user_context[user_id].update({
         "title": title, 
         "type": filter_type, 
         "val": filter_val, 
-        "offset": page_offset
+        "offset": page_offset,
+        "user_id_str": user_id_str  # 🔥 СОХРАНЯЕМ user_id
     })
 
     if total == 0:
@@ -434,7 +436,15 @@ async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+        # Используем сохраненный user_id_str
+        await show_task_list(
+            callback.message, 
+            ctx["title"], 
+            ctx["type"], 
+            ctx["val"], 
+            is_edit=True, 
+            page_offset=ctx.get("offset", 0)
+        )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
@@ -443,7 +453,14 @@ async def page_next(callback):
     if ctx:
         new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
         ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+        await show_task_list(
+            callback.message, 
+            ctx["title"], 
+            ctx["type"], 
+            ctx["val"], 
+            is_edit=True, 
+            page_offset=new_offset
+        )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_prev")
@@ -452,7 +469,14 @@ async def page_prev(callback):
     if ctx:
         new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
         ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+        await show_task_list(
+            callback.message, 
+            ctx["title"], 
+            ctx["type"], 
+            ctx["val"], 
+            is_edit=True, 
+            page_offset=new_offset
+        )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
@@ -463,7 +487,7 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            # 🔥 ПРОВЕРКА: задача принадлежит пользователю
+            # Проверяем, что задача принадлежит пользователю
             if str(task.user_id) == str(uid):
                 await task_service.update_task(tid, is_done=not task.is_done)
             else:
