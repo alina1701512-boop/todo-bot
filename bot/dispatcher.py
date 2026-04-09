@@ -12,6 +12,7 @@ from services import task_service
 from services.ai_parser import parse_task_with_ai, make_naive, chat_with_ai
 
 logger = logging.getLogger(__name__)
+user_context = {}
 tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
@@ -42,28 +43,23 @@ def get_period_menu_keyboard():
 # ================= УТИЛИТЫ =================
 def parse_priority(text):
     t = text.lower()
-    if any(w in t for w in ["красный", "срочно", "важно", "горит", "срочн", "критич"]):
-        return "red"
-    if any(w in t for w in ["зеленый", "легко", "лайт", "обычн", "спокойн"]):
-        return "green"
+    if any(w in t for w in ["красный", "срочно", "важно", "горит", "срочн", "критич"]): return "red"
+    if any(w in t for w in ["зеленый", "легко", "лайт", "обычн", "спокойн"]): return "green"
     return "none"
 
 def parse_date(text):
     now = datetime.now(tz)
     text_lower = text.lower().strip()
     corrections = {"сегодны": "сегодня", "завтрп": "завтра", "послезавтрп": "послезавтра"}
-    for wrong, correct in corrections.items():
-        text_lower = text_lower.replace(wrong, correct)
+    for wrong, correct in corrections.items(): text_lower = text_lower.replace(wrong, correct)
     time_match = re.search(r'(\d{1,2})[:.](\d{2})', text_lower)
     target_hour = None
     target_minute = 0
     if time_match:
         target_hour = int(time_match.group(1))
         target_minute = int(time_match.group(2))
-        if not (0 <= target_hour <= 23 and 0 <= target_minute <= 59):
-            target_hour = None
-    if "сегодня" in text_lower:
-        return now.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
+        if not (0 <= target_hour <= 23 and 0 <= target_minute <= 59): target_hour = None
+    if "сегодня" in text_lower: return now.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
     if "завтра" in text_lower:
         t = now + timedelta(days=1)
         return t.replace(hour=target_hour or 23, minute=target_minute or 59, second=0, microsecond=0)
@@ -84,8 +80,7 @@ def clean_title(text):
              "сегодня", "завтра", "послезавтра", "неделю", "месяц", "на днях",
              "в конце месяца", "в начале месяца", "в середине месяца", "в выходные",
              "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-    for w in words:
-        text = text.lower().replace(w, "")
+    for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
 # ================= ФУНКЦИЯ СОРТИРОВКИ =================
@@ -106,62 +101,63 @@ def get_sort_key(task):
 def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
-# ================= ПОЛУЧЕНИЕ ЗАДАЧ С ФИЛЬТРОМ =================
-async def get_tasks_by_filter(user_id: str, filter_type: str, filter_val):
+# ================= ОТРИСОВКА СПИСКА =================
+async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
+    user_id = message.from_user.id
     uid_str = str(user_id)
-    
-    if filter_type == "all":
-        return await task_service.get_all_tasks(user_id=uid_str)
+
+    if filter_type == "all": 
+        tasks = await task_service.get_all_tasks(user_id=uid_str)
     elif filter_type == "priority":
         all_t = await task_service.get_all_tasks(user_id=uid_str)
-        return [t for t in all_t if t.priority == filter_val]
+        tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
-        if filter_val == "Сегодня":
-            return await task_service.get_tasks_for_date(now.date(), user_id=uid_str)
-        elif filter_val == "Завтра":
-            return await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=uid_str)
-        elif filter_val == "📆 Неделя":
-            return await task_service.get_tasks_for_week(now.date(), user_id=uid_str)
+        if filter_val == "Сегодня": 
+            tasks = await task_service.get_tasks_for_date(now.date(), user_id=uid_str)
+        elif filter_val == "Завтра": 
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=uid_str)
+        elif filter_val == "📆 Неделя": 
+            tasks = await task_service.get_tasks_for_week(now.date(), user_id=uid_str)
         elif filter_val == "🗓️ Месяц":
             all_t = await task_service.get_all_tasks(user_id=uid_str)
             end = now.date() + timedelta(days=30)
-            return [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
-    return []
-
-# ================= ОТРИСОВКА СПИСКА =================
-async def show_task_list(message, title, filter_type, filter_val, page_offset=0, is_edit=False):
-    user_id = message.from_user.id
-    uid_str = str(user_id)
+            tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
+        else: tasks = []
+    else: tasks = []
     
-    # Получаем задачи с фильтром
-    tasks = await get_tasks_by_filter(uid_str, filter_type, filter_val)
     all_tasks = sort_tasks_by_priority_and_time(tasks)
     total = len(all_tasks)
     
-    # Корректируем offset
-    if total > 0:
-        max_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
-        if page_offset > max_offset:
-            page_offset = max_offset
-    if page_offset < 0:
+    if page_offset >= total and total > 0: 
+        page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+    if page_offset < 0: 
         page_offset = 0
     
+    user_context.setdefault(user_id, {})
+    user_context[user_id].update({
+        "title": title, 
+        "type": filter_type, 
+        "val": filter_val, 
+        "offset": page_offset
+    })
+
     if total == 0:
         text = "📋 Задач нет"
+        kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
         try:
-            if is_edit:
-                await message.edit_text(text)
-            else:
-                await message.answer(text)
+            if is_edit: 
+                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+            else: 
+                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
         except Exception as e:
             logger.error(f"❌ Show empty list error: {e}")
         return
-    
+
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
-    page_tasks = all_tasks[page_offset:page_offset + ITEMS_PER_PAGE]
-    
+    page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
+
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
     
@@ -173,64 +169,75 @@ async def show_task_list(message, title, filter_type, filter_val, page_offset=0,
         
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
-        # Передаём всю информацию в callback_data
-        cb_data = f"task_{t.id}:{filter_type}:{filter_val}:{page_offset}"
-        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb_data)])
+        cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
+        
+        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
     nav = []
-    if page_offset > 0:
-        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page_prev:{filter_type}:{filter_val}:{page_offset}"))
-    if page_offset + ITEMS_PER_PAGE < total:
-        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"page_next:{filter_type}:{filter_val}:{page_offset}"))
-    if nav:
+    if page_offset > 0: 
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
+    if page_offset + ITEMS_PER_PAGE < total: 
+        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
+    if nav: 
         kb.append(nav)
-    
+
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
     try:
-        if is_edit:
+        if is_edit: 
             await message.edit_text(text, reply_markup=markup)
-        else:
+        else: 
             await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
+        logger.error(f"❌ Edit failed: {e}")
+        try:
+            await message.answer(text, reply_markup=markup)
+        except:
             pass
-        else:
-            logger.error(f"❌ Edit failed: {e}")
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
-async def cmd_start(message):
+async def cmd_start(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("👋 Привет! Я твой AI-планировщик.", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔙 Назад")
-async def go_back(message):
+async def go_back(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("🔙 Главное меню:", reply_markup=get_main_menu_keyboard())
 
 @dp.message(lambda m: m.text == "🔥 Важность")
-async def priority_menu(message):
+async def priority_menu(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("🔥 Выбери важность:", reply_markup=get_priority_menu_keyboard())
 
 @dp.message(lambda m: m.text == "📅 Период")
-async def period_menu(message):
+async def period_menu(message): 
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await message.answer("📅 Выбери период:", reply_markup=get_period_menu_keyboard())
 
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await show_task_list(message, "Все задачи", "all", None, page_offset=0)
 
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
 async def filter_importance(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     p_map = {"🔴 Срочные": "red", "🟡 Средние": "yellow", "🟢 Лайтовые": "green"}
     await show_task_list(message, message.text, "priority", p_map[message.text], page_offset=0)
 
 @dp.message(lambda m: m.text in ["Сегодня", "Завтра", "📆 Неделя", "🗓️ Месяц"])
 async def filter_period(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
     await show_task_list(message, message.text, "period", message.text, page_offset=0)
 
 # 🤖 AI ЧАТ
 @dp.message(lambda m: m.text == "🤖 AI Чат")
 async def enter_ai_mode(message):
+    user_context.setdefault(message.from_user.id, {})["ai_mode"] = True
     await message.answer("🤖 **Режим AI-чата включен**\n\nПиши что угодно, я помогу!\nЧтобы вернуться к задачам, нажми /start или 🔙 Назад.")
 
 # 📝 ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА
@@ -241,9 +248,10 @@ async def enter_ai_mode(message):
 async def handle_text(message):
     uid = message.from_user.id
     uid_str = str(uid)
+    state = user_context.setdefault(uid, {})
     text = message.text.strip()
 
-    if text.endswith("?"):
+    if state.get("ai_mode") or text.endswith("?"):
         await message.answer("🤖 Думаю...")
         reply = await chat_with_ai(text)
         await message.answer(reply or "❌ Не удалось получить ответ.")
@@ -265,8 +273,12 @@ async def handle_text(message):
     task = await task_service.create_task(title, due_at, priority, user_id=uid_str)
     emoji = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(priority, "⚪️")
     due_str = due_at.strftime("%d.%m в %H:%M") if due_at else "Без срока"
-
+    
     await message.answer(f"{emoji} Задача добавлена!\n📝 {task.title}\n🕐 {due_str}")
+    
+    ctx = user_context.get(uid)
+    if ctx:
+        await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
 
 # ================= 📊 СТАТИСТИКА /stats =================
 @dp.message(Command("stats"))
@@ -290,6 +302,7 @@ async def show_stats(message: types.Message):
 # ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
 @dp.message(lambda m: m.voice)
 async def handle_voice(message: types.Message):
+    uid = message.from_user.id
     await message.answer("🎧 Слушаю...")
     try:
         file = await bot.get_file(message.voice.file_id)
@@ -366,86 +379,68 @@ async def google_status(message: types.Message):
         await message.answer("⚪️ **Не подключен**. Используй /connect_google")
 
 # ================= КОЛБЭККИ =================
-@dp.callback_query(lambda c: c.data.startswith("page_prev"))
-async def page_prev(callback):
-    try:
-        parts = callback.data.split(":")
-        filter_type = parts[1] if len(parts) > 1 else "all"
-        filter_val = parts[2] if len(parts) > 2 else None
-        if filter_val == "None":
-            filter_val = None
-        current_offset = int(parts[3]) if len(parts) > 3 else 0
-        
-        new_offset = max(0, current_offset - ITEMS_PER_PAGE)
-        await show_task_list(callback.message, "Все задачи" if filter_type == "all" else filter_val, 
-                           filter_type, filter_val, page_offset=new_offset, is_edit=True)
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"❌ page_prev error: {e}")
-        await callback.answer("⚠️ Ошибка", show_alert=True)
+@dp.callback_query(lambda c: c.data == "refresh")
+async def refresh_list(callback):
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        ctx["ai_mode"] = False
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+    await callback.answer()
 
-@dp.callback_query(lambda c: c.data.startswith("page_next"))
+@dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback):
-    try:
-        parts = callback.data.split(":")
-        filter_type = parts[1] if len(parts) > 1 else "all"
-        filter_val = parts[2] if len(parts) > 2 else None
-        if filter_val == "None":
-            filter_val = None
-        current_offset = int(parts[3]) if len(parts) > 3 else 0
-        
-        new_offset = current_offset + ITEMS_PER_PAGE
-        await show_task_list(callback.message, "Все задачи" if filter_type == "all" else filter_val, 
-                           filter_type, filter_val, page_offset=new_offset, is_edit=True)
-        await callback.answer()
-    except Exception as e:
-        logger.error(f"❌ page_next error: {e}")
-        await callback.answer("⚠️ Ошибка", show_alert=True)
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
+        ctx["offset"] = new_offset
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    await callback.answer()
 
-@dp.callback_query(lambda c: c.data.startswith("task_"))
+@dp.callback_query(lambda c: c.data == "page_prev")
+async def page_prev(callback):
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
+        ctx["offset"] = new_offset
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
 async def handle_task_click(callback):
     try:
-        # Формат: task_123:filter_type:filter_val:page_offset
-        parts = callback.data.split(":")
-        task_id = int(parts[0].split("_")[1])
-        filter_type = parts[1] if len(parts) > 1 else "all"
-        filter_val = parts[2] if len(parts) > 2 else None
-        if filter_val == "None":
-            filter_val = None
-        page_offset = int(parts[3]) if len(parts) > 3 else 0
-        
         uid = callback.from_user.id
+        tid = int(callback.data.split("_")[1])
         
-        # Получаем задачу и обновляем статус
-        task = await task_service.get_task_by_id(task_id)
+        task = await task_service.get_task_by_id(tid)
         if task:
-            if task.user_id is None or str(task.user_id) == str(uid):
-                await task_service.update_task(task_id, is_done=not task.is_done)
+            if str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
             else:
                 await callback.answer("❌ Это не твоя задача!", show_alert=True)
                 return
         
-        await callback.answer("✅ Статус обновлен")
+        await callback.answer("")
         
-        # Обновляем список
-        await show_task_list(callback.message, "Все задачи" if filter_type == "all" else filter_val, 
-                           filter_type, filter_val, page_offset=page_offset, is_edit=True)
+        ctx = user_context.get(uid, {})
+        
+        if ctx.get("title"):
+            await show_task_list(
+                callback.message,
+                ctx.get("title", "Все задачи"),
+                ctx.get("type", "all"),
+                ctx.get("val"),
+                is_edit=True,
+                page_offset=ctx.get("offset", 0)
+            )
+        else:
+            await show_task_list(
+                callback.message,
+                "Все задачи",
+                "all",
+                None,
+                is_edit=True,
+                page_offset=0
+            )
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
         await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
-
-# ================= ВРЕМЕННАЯ КОМАНДА ДЛЯ ВОССТАНОВЛЕНИЯ СТАРЫХ ЗАДАЧ =================
-@dp.message(Command("fix_old_tasks"))
-async def fix_old_tasks(message: types.Message):
-    from sqlalchemy import text
-    from database import async_session
-    
-    uid_str = str(message.from_user.id)
-    
-    async with async_session() as session:
-        result = await session.execute(
-            text("UPDATE tasks SET user_id = :uid WHERE user_id IS NULL"),
-            {"uid": uid_str}
-        )
-        await session.commit()
-        await message.answer(f"✅ Обновлено {result.rowcount} старых задач. Теперь они снова видны!")
