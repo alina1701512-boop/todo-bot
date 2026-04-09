@@ -500,3 +500,19 @@ async def handle_task_click(callback):
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
         await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
+
+# ================= ВРЕМЕННАЯ КОМАНДА ДЛЯ ВОССТАНОВЛЕНИЯ СТАРЫХ ЗАДАЧ =================
+@dp.message(Command("fix_old_tasks"))
+async def fix_old_tasks(message: types.Message):
+    from sqlalchemy import text
+    from database import async_session
+    
+    uid_str = str(message.from_user.id)
+    
+    async with async_session() as session:
+        result = await session.execute(
+            text("UPDATE tasks SET user_id = :uid WHERE user_id IS NULL"),
+            {"uid": uid_str}
+        )
+        await session.commit()
+        await message.answer(f"✅ Обновлено {result.rowcount} старых задач. Теперь они снова видны!")
