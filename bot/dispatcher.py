@@ -108,25 +108,27 @@ def get_sort_key(task):
 def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
-# ================= ОТРИСОВКА СПИСКА =================
+# ================= ОТРИСОВКА СПИСКА (С ФИЛЬТРАЦИЕЙ ПО ПОЛЬЗОВАТЕЛЮ) =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
+    user_id_str = str(user_id)  # 🔥 ДЛЯ ФИЛЬТРАЦИИ
     
+    # 🔥 ВЕЗДЕ ПЕРЕДАЕМ user_id
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks()
+        tasks = await task_service.get_all_tasks(user_id=user_id_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
+        all_t = await task_service.get_all_tasks(user_id=user_id_str)
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date())
+            tasks = await task_service.get_tasks_for_date(now.date(), user_id=user_id_str)
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=user_id_str)
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date())
+            tasks = await task_service.get_tasks_for_week(now.date(), user_id=user_id_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=user_id_str)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
@@ -461,7 +463,12 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+            # 🔥 ПРОВЕРКА: задача принадлежит пользователю
+            if str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
+            else:
+                await callback.answer("❌ Это не твоя задача!", show_alert=True)
+                return
         
         await callback.answer("")
         
