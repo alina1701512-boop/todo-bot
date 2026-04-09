@@ -121,57 +121,43 @@ def sort_tasks_by_priority_and_time(tasks):
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
+    uid_str = str(user_id)  # 🔥 Приводим к строке для БД
     
-    # Получаем задачи
+    # 🔥 Загрузка задач С ФИЛЬТРОМ ПО user_id
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks()
+        all_tasks = await task_service.get_all_tasks(user_id=uid_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
-        tasks = [t for t in all_t if t.priority == filter_val]
+        all_t = await task_service.get_all_tasks(user_id=uid_str)
+        all_tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date())
+            all_tasks = await task_service.get_tasks_for_date(now.date(), user_id=uid_str)
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            all_tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=uid_str)
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date())
+            all_tasks = await task_service.get_tasks_for_week(now.date(), user_id=uid_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=uid_str)
             end = now.date() + timedelta(days=30)
-            tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
-        else: 
-            tasks = []
-    else: 
-        tasks = []
-    
-    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
-    all_tasks = sort_tasks_by_priority_and_time(tasks)
+            all_tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
+        else: all_tasks = []
+    else: all_tasks = []
+
     total = len(all_tasks)
-    
-    if page_offset >= total and total > 0: 
-        page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
-    if page_offset < 0: 
-        page_offset = 0
-    
+    if page_offset >= total and total > 0: page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+    if page_offset < 0: page_offset = 0
+
     user_context.setdefault(user_id, {})
-    user_context[user_id].update({
-        "title": title, 
-        "type": filter_type, 
-        "val": filter_val, 
-        "offset": page_offset
-    })
+    user_context[user_id].update({"title": title, "type": filter_type, "val": filter_val, "offset": page_offset})
 
     if total == 0:
         text = "📋 Задач нет"
         kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
         try:
-            if is_edit: 
-                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-            else: 
-                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-        except Exception as e:
-            logger.error(f"❌ Show empty list error: {e}")
+            if is_edit: await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+            else: await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+        except: pass
         return
 
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -180,46 +166,24 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
 
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
-    
     for t in page_tasks:
-        # Иконка статуса + приоритета
-        if t.is_done:
-            icon = "✅"
-        else:
-            priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-            icon = priority_icon
-        
-        # Полный текст задачи (не обрезаем)
-        task_text = t.title
+        icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+        short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
-        
-        # Формируем кнопку: иконка слева, затем текст, затем дата
-        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
-    
+        kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
+
     nav = []
-    if page_offset > 0: 
-        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total: 
-        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
-    if nav: 
-        kb.append(nav)
+    if page_offset > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
+    if page_offset + ITEMS_PER_PAGE < total: nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
+    if nav: kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
     try:
-        if is_edit: 
-            await message.edit_text(text, reply_markup=markup)
-        else: 
-            await message.answer(text, reply_markup=markup)
+        if is_edit: await message.edit_text(text, reply_markup=markup)
+        else: await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
         logger.error(f"❌ Edit failed: {e}")
-        try:
-            await message.answer(text, reply_markup=markup)
-        except:
-            pass
-    except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
