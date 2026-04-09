@@ -379,28 +379,71 @@ async def google_status(message: types.Message):
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
+    uid = callback.from_user.id
+    ctx = user_context.get(uid)
+    
+    if not ctx:
+        # Если контекста нет — показываем все задачи с первой страницы
+        await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True, page_offset=0)
+        await callback.answer()
+        return
+    
+    ctx["ai_mode"] = False
+    await show_task_list(
+        callback.message, 
+        ctx.get("title", "Все задачи"), 
+        ctx.get("type", "all"), 
+        ctx.get("val"), 
+        is_edit=True, 
+        page_offset=ctx.get("offset", 0)
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
-        ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    uid = callback.from_user.id
+    ctx = user_context.get(uid)
+    
+    if not ctx:
+        # Если контекста нет — показываем все задачи с первой страницы
+        await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True, page_offset=0)
+        await callback.answer()
+        return
+    
+    new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
+    ctx["offset"] = new_offset
+    
+    await show_task_list(
+        callback.message, 
+        ctx.get("title", "Все задачи"), 
+        ctx.get("type", "all"), 
+        ctx.get("val"), 
+        is_edit=True, 
+        page_offset=new_offset
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_prev")
 async def page_prev(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
-        ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    uid = callback.from_user.id
+    ctx = user_context.get(uid)
+    
+    if not ctx:
+        await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True, page_offset=0)
+        await callback.answer()
+        return
+    
+    new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
+    ctx["offset"] = new_offset
+    
+    await show_task_list(
+        callback.message, 
+        ctx.get("title", "Все задачи"), 
+        ctx.get("type", "all"), 
+        ctx.get("val"), 
+        is_edit=True, 
+        page_offset=new_offset
+    )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
@@ -411,7 +454,7 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            # 🔥 ПРОВЕРКА: задача принадлежит пользователю
+            # Проверка: задача принадлежит пользователю
             if str(task.user_id) == str(uid):
                 await task_service.update_task(tid, is_done=not task.is_done)
             else:
@@ -420,18 +463,11 @@ async def handle_task_click(callback):
         
         await callback.answer("")
         
+        # Получаем контекст или создаём новый
         ctx = user_context.get(uid, {})
         
-        if ctx.get("title"):
-            await show_task_list(
-                callback.message,
-                ctx.get("title", "Все задачи"),
-                ctx.get("type", "all"),
-                ctx.get("val"),
-                is_edit=True,
-                page_offset=ctx.get("offset", 0)
-            )
-        else:
+        # Если контекста нет или он пустой — показываем все задачи
+        if not ctx or not ctx.get("title"):
             await show_task_list(
                 callback.message,
                 "Все задачи",
@@ -439,6 +475,15 @@ async def handle_task_click(callback):
                 None,
                 is_edit=True,
                 page_offset=0
+            )
+        else:
+            await show_task_list(
+                callback.message,
+                ctx.get("title", "Все задачи"),
+                ctx.get("type", "all"),
+                ctx.get("val"),
+                is_edit=True,
+                page_offset=ctx.get("offset", 0)
             )
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
