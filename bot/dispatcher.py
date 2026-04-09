@@ -466,7 +466,10 @@ async def handle_task_click(callback):
 
         task = await task_service.get_task_by_id(tid)
         if task:
-            if str(task.user_id) == str(uid):
+            # 🔥 ФИКС: разрешаем обновлять, если:
+            # 1. task.user_id = None (старые задачи), ИЛИ
+            # 2. task.user_id совпадает с текущим пользователем
+            if task.user_id is None or str(task.user_id) == str(uid):
                 await task_service.update_task(tid, is_done=not task.is_done)
             else:
                 await callback.answer("❌ Это не твоя задача!", show_alert=True)
