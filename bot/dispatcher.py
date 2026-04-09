@@ -405,7 +405,33 @@ async def google_status(message: types.Message):
             "⚪️ **Google Calendar не подключен**\n\n"
             "Напиши `/connect_google`, чтобы начать синхронизацию."
         )
-        
+        # ================= 🛠️ ВРЕМЕННАЯ КОМАНДА ОЧИСТКИ =================
+@dp.message(Command("admin_cleanup"))
+async def admin_cleanup(message: types.Message):
+    """
+    🔧 УДАЛЯЕТ старые задачи без user_id (ТОЛЬКО ДЛЯ ТЕБЯ!)
+    После использования — УДАЛИ эту команду из кода!
+    """
+    # Проверка: только твой Telegram ID
+    if str(message.from_user.id) != "342298611":
+        await message.answer("❌ Доступ запрещён")
+        return
+    
+    from sqlalchemy import text
+    from database import async_session
+    
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                text("DELETE FROM tasks WHERE user_id IS NULL")
+            )
+            await session.commit()
+            deleted = result.rowcount
+        await message.answer(f"✅ Удалено старых задач: {deleted}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+# ================= КОЛБЭККИ =================
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
