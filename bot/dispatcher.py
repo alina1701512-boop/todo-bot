@@ -111,24 +111,22 @@ def sort_tasks_by_priority_and_time(tasks):
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
-    user_id_str = str(user_id)
     
-    # Получаем задачи с фильтрацией по пользователю
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks(user_id=user_id_str)
+        tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks(user_id=user_id_str)
+        all_t = await task_service.get_all_tasks()
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date(), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_date(now.date())
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date(), user_id=user_id_str)
+            tasks = await task_service.get_tasks_for_week(now.date())
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks(user_id=user_id_str)
+            all_t = await task_service.get_all_tasks()
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
@@ -144,14 +142,12 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     if page_offset < 0: 
         page_offset = 0
     
-    # Сохраняем контекст с user_id
     user_context.setdefault(user_id, {})
     user_context[user_id].update({
         "title": title, 
         "type": filter_type, 
         "val": filter_val, 
-        "offset": page_offset,
-        "user_id_str": user_id_str  # 🔥 СОХРАНЯЕМ user_id
+        "offset": page_offset
     })
 
     if total == 0:
@@ -436,15 +432,7 @@ async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         ctx["ai_mode"] = False
-        # Используем сохраненный user_id_str
-        await show_task_list(
-            callback.message, 
-            ctx["title"], 
-            ctx["type"], 
-            ctx["val"], 
-            is_edit=True, 
-            page_offset=ctx.get("offset", 0)
-        )
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
@@ -453,14 +441,7 @@ async def page_next(callback):
     if ctx:
         new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
         ctx["offset"] = new_offset
-        await show_task_list(
-            callback.message, 
-            ctx["title"], 
-            ctx["type"], 
-            ctx["val"], 
-            is_edit=True, 
-            page_offset=new_offset
-        )
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_prev")
@@ -469,14 +450,7 @@ async def page_prev(callback):
     if ctx:
         new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
         ctx["offset"] = new_offset
-        await show_task_list(
-            callback.message, 
-            ctx["title"], 
-            ctx["type"], 
-            ctx["val"], 
-            is_edit=True, 
-            page_offset=new_offset
-        )
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
@@ -487,12 +461,7 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            # Проверяем, что задача принадлежит пользователю
-            if str(task.user_id) == str(uid):
-                await task_service.update_task(tid, is_done=not task.is_done)
-            else:
-                await callback.answer("❌ Это не твоя задача!", show_alert=True)
-                return
+            await task_service.update_task(tid, is_done=not task.is_done)
         
         await callback.answer("")
         
