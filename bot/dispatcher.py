@@ -83,10 +83,8 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ФУНКЦИЯ СОРТИРОВКИ (ИСПРАВЛЕНА) =================
+# ================= ФУНКЦИЯ СОРТИРОВКИ =================
 def get_sort_key(task):
-    """Возвращает ключ для сортировки задачи"""
-    # Приоритет: red(0) -> yellow(1) -> green(2) -> none(3) -> done(4)
     if task.is_done:
         priority_order = 4
     else:
@@ -97,9 +95,7 @@ def get_sort_key(task):
             "none": 3
         }.get(task.priority, 3)
     
-    # Время: None ставим в конец (используем datetime.max)
     if task.due_at:
-        # Убеждаемся, что due_at наивный (без часового пояса)
         if hasattr(task.due_at, 'tzinfo') and task.due_at.tzinfo is not None:
             due_time = task.due_at.replace(tzinfo=None)
         else:
@@ -110,34 +106,29 @@ def get_sort_key(task):
     return (priority_order, due_time)
 
 def sort_tasks_by_priority_and_time(tasks):
-    """
-    Сортирует задачи:
-    1. Выполненные - в конец
-    2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
-    3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
-    """
     return sorted(tasks, key=get_sort_key)
 
-# ================= ОТРИСОВКА СПИСКА =================
+# ================= ОТРИСОВКА СПИСКА (ИСПРАВЛЕНА) =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
+    user_id_str = str(user_id)  # 🔥 ДОБАВИЛИ
     
-    # Получаем задачи
+    # 🔥 ИСПРАВЛЕНО: везде передаем user_id
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks()
+        tasks = await task_service.get_all_tasks(user_id=user_id_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
+        all_t = await task_service.get_all_tasks(user_id=user_id_str)
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date())
+            tasks = await task_service.get_tasks_for_date(now.date(), user_id=user_id_str)
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=user_id_str)
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date())
+            tasks = await task_service.get_tasks_for_week(now.date(), user_id=user_id_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=user_id_str)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
@@ -145,7 +136,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: 
         tasks = []
     
-    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
     all_tasks = sort_tasks_by_priority_and_time(tasks)
     total = len(all_tasks)
     
@@ -182,19 +172,15 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     kb = []
     
     for t in page_tasks:
-        # Иконка статуса + приоритета
         if t.is_done:
             icon = "✅"
         else:
-            priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-            icon = priority_icon
+            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         
-        # Полный текст задачи (не обрезаем)
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         
-        # Формируем кнопку: иконка слева, затем текст, затем дата
         kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
     nav = []
@@ -477,7 +463,12 @@ async def handle_task_click(callback):
         
         task = await task_service.get_task_by_id(tid)
         if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+            # 🔥 ПРОВЕРЯЕМ, ЧТО ЗАДАЧА ПРИНАДЛЕЖИТ ПОЛЬЗОВАТЕЛЮ
+            if str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
+            else:
+                await callback.answer("❌ Это не твоя задача!", show_alert=True)
+                return
         
         await callback.answer("")
         
