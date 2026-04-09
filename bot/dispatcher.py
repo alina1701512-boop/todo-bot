@@ -153,12 +153,11 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
 
     if total == 0:
         text = "📋 Задач нет"
-        kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
         try:
             if is_edit:
-                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+                await message.edit_text(text)
             else:
-                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+                await message.answer(text)
         except Exception as e:
             logger.error(f"❌ Show empty list error: {e}")
         return
@@ -391,27 +390,6 @@ async def google_status(message: types.Message):
         await message.answer("⚪️ **Не подключен**. Используй /connect_google")
 
 # ================= КОЛБЭККИ =================
-@dp.callback_query(lambda c: c.data == "refresh")
-async def refresh_list(callback):
-    uid = callback.from_user.id
-    ctx = user_context.get(uid)
-
-    if not ctx:
-        await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True, page_offset=0)
-        await callback.answer()
-        return
-
-    ctx["ai_mode"] = False
-    await show_task_list(
-        callback.message,
-        ctx.get("title", "Все задачи"),
-        ctx.get("type", "all"),
-        ctx.get("val"),
-        is_edit=True,
-        page_offset=ctx.get("offset", 0)
-    )
-    await callback.answer()
-
 @dp.callback_query(lambda c: c.data == "page_next")
 async def page_next(callback):
     uid = callback.from_user.id
@@ -477,6 +455,7 @@ async def handle_task_click(callback):
 
         await callback.answer("")
 
+        # Получаем контекст после обновления задачи
         ctx = user_context.get(uid, {})
 
         if not ctx or not ctx.get("title"):
@@ -489,6 +468,7 @@ async def handle_task_click(callback):
                 page_offset=0
             )
         else:
+            # Обновляем список, оставаясь на той же странице
             await show_task_list(
                 callback.message,
                 ctx.get("title", "Все задачи"),
