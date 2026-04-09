@@ -440,8 +440,13 @@ async def handle_task_click(callback):
         tid = int(callback.data.split("_")[1])
         
         task = await task_service.get_task_by_id(tid)
-        if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+if task:
+    # 🔥 Проверка: задача принадлежит пользователю
+    if task.user_id is None or str(task.user_id) == str(uid):
+        await task_service.update_task(tid, is_done=not task.is_done)
+    else:
+        await callback.answer("❌ Это не твоя задача!", show_alert=True)
+        return
         
         await callback.answer("")
         
