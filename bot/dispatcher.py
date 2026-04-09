@@ -127,19 +127,29 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     all_tasks = sort_tasks_by_priority_and_time(tasks)
     total = len(all_tasks)
     
-    if page_offset >= total and total > 0: page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
-    if page_offset < 0: page_offset = 0
+    if page_offset >= total and total > 0: 
+        page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+    if page_offset < 0: 
+        page_offset = 0
     
     user_context.setdefault(user_id, {})
-    user_context[user_id].update({"title": title, "type": filter_type, "val": filter_val, "offset": page_offset})
+    user_context[user_id].update({
+        "title": title, 
+        "type": filter_type, 
+        "val": filter_val, 
+        "offset": page_offset
+    })
 
     if total == 0:
         text = "📋 Задач нет"
         kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
         try:
-            if is_edit: await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-            else: await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-        except Exception as e: logger.error(f"❌ Show empty list error: {e}")
+            if is_edit: 
+                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+            else: 
+                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
+        except Exception as e:
+            logger.error(f"❌ Show empty list error: {e}")
         return
 
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -150,26 +160,40 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     kb = []
     
     for t in page_tasks:
-        icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-        short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
+        if t.is_done:
+            icon = "✅"
+        else:
+            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+        
+        task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
-        kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
-
+        
+        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
+    
     nav = []
-    if page_offset > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total: nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
-    if nav: kb.append(nav)
+    if page_offset > 0: 
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
+    if page_offset + ITEMS_PER_PAGE < total: 
+        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
+    if nav: 
+        kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    
     try:
-        if is_edit: await message.edit_text(text, reply_markup=markup)
-        else: await message.answer(text, reply_markup=markup)
+        if is_edit: 
+            await message.edit_text(text, reply_markup=markup)
+        else: 
+            await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
         logger.error(f"❌ Edit failed: {e}")
-        try: await message.answer(text, reply_markup=markup)
-        except: pass
-    except Exception as e: logger.error(f"❌ Unexpected error: {e}")
+        try:
+            await message.answer(text, reply_markup=markup)
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
@@ -279,7 +303,6 @@ async def handle_voice(message: types.Message):
     uid = message.from_user.id
     await message.answer("🎧 Слушаю...")
     try:
-        # 🔥 ИСПРАВЛЕНО: bot.get_file() вместо message.bot.get_file()
         file = await bot.get_file(message.voice.file_id)
         file_path = file.file_path
         async with httpx.AsyncClient() as client:
@@ -359,7 +382,7 @@ async def refresh_list(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=ctx.get("offset", 0))
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_next")
@@ -380,21 +403,43 @@ async def page_prev(callback):
         await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
     await callback.answer()
 
-# 🔥 ПРОСТОЙ handle_task_click (без блокирующей проверки)
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
 async def handle_task_click(callback):
     try:
         uid = callback.from_user.id
         tid = int(callback.data.split("_")[1])
+        
         task = await task_service.get_task_by_id(tid)
         if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+            # 🔥 ПРОВЕРКА: задача принадлежит пользователю
+            if str(task.user_id) == str(uid):
+                await task_service.update_task(tid, is_done=not task.is_done)
+            else:
+                await callback.answer("❌ Это не твоя задача!", show_alert=True)
+                return
+        
         await callback.answer("")
+        
         ctx = user_context.get(uid, {})
+        
         if ctx.get("title"):
-            await show_task_list(callback.message, ctx.get("title", "Все задачи"), ctx.get("type", "all"), ctx.get("val"), is_edit=True, page_offset=ctx.get("offset", 0))
+            await show_task_list(
+                callback.message,
+                ctx.get("title", "Все задачи"),
+                ctx.get("type", "all"),
+                ctx.get("val"),
+                is_edit=True,
+                page_offset=ctx.get("offset", 0)
+            )
         else:
-            await show_task_list(callback.message, "Все задачи", "all", None, is_edit=True, page_offset=0)
+            await show_task_list(
+                callback.message,
+                "Все задачи",
+                "all",
+                None,
+                is_edit=True,
+                page_offset=0
+            )
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
         await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
