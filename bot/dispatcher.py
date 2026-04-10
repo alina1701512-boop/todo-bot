@@ -229,9 +229,16 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             await message.edit_text(text, reply_markup=markup)
         else:
             await message.answer(text, reply_markup=markup)
-    except TelegramBadRequest as e:
-        if "message is not modified" not in str(e):
+        except TelegramBadRequest as e:
+        # 🔥 Игнорируем ошибку "message is not modified" - это нормально
+        if "message is not modified" in str(e):
+            logger.debug("Message not modified, ignoring")
+        else:
             logger.error(f"❌ Edit failed: {e}")
+            try:
+                await message.answer(text, reply_markup=markup)
+            except:
+                pass
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
 
