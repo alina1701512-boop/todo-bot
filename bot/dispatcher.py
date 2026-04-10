@@ -104,10 +104,11 @@ def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
+# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
     
-    # 🔥 ВАЖНО: НЕ передаем user_id как аргумент, фильтруем ПОСЛЕ получения!
+    # 🔥 Получаем задачи
     if filter_type == "all": 
         all_tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
@@ -130,29 +131,21 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: 
         all_tasks = []
     
-    # 🔥 ФИЛЬТРУЕМ ПО ПОЛЬЗОВАТЕЛЮ
+    # 🔥 Фильтруем по пользователю
     uid_str = str(user_id)
     all_tasks = [t for t in all_tasks if t.user_id is None or str(t.user_id) == uid_str]
     
-    # 🔥 НОВОЕ: РАЗДЕЛЯЕМ НА АКТИВНЫЕ И ВЫПОЛНЕННЫЕ
+    # 🔥 Разделяем на активные и выполненные
     active_tasks = [t for t in all_tasks if not t.is_done]
     completed_tasks = [t for t in all_tasks if t.is_done]
     
-    # 🔥 НОВОЕ: ФИЛЬТР ПРИМЕНЯЕМ ТОЛЬКО К АКТИВНЫМ ЗАДАЧАМ
-    if filter_type != "all":
-        # Оставляем только активные задачи, соответствующие фильтру
-        filtered_active = active_tasks
-        # Выполненные задачи НЕ фильтруем - они ВСЕГДА показываются в конце
-    else:
-        filtered_active = active_tasks
+    # 🔥 Сортируем активные по приоритету и дате
+    sorted_active = sort_tasks_by_priority_and_time(active_tasks)
     
-    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ ТОЛЬКО К АКТИВНЫМ ЗАДАЧАМ
-    sorted_active = sort_tasks_by_priority_and_time(filtered_active)
+    # 🔥 Выполненные показываем в конце (пока без сортировки)
+    sorted_completed = completed_tasks
     
-    # 🔥 ВЫПОЛНЕННЫЕ ЗАДАЧИ СОРТИРУЕМ ПО ID (последние выполненные в конце)
-    sorted_completed = sorted(completed_tasks, key=lambda t: t.id, reverse=True)
-    
-    # 🔥 ОБЪЕДИНЯЕМ: сначала активные, потом выполненные
+    # 🔥 Объединяем: сначала активные, потом выполненные
     all_tasks = sorted_active + sorted_completed
     total = len(all_tasks)
     
@@ -171,6 +164,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         "offset": page_offset
     })
 
+    # 🔥 Если задач нет
     if total == 0:
         text = "📋 Задач нет"
         kb = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]]
@@ -183,59 +177,61 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             logger.error(f"❌ Show empty list error: {e}")
         return
 
+    # 🔥 Считаем страницы
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
     page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
-    # 🔥 НОВОЕ: Показываем количество активных и выполненных
+    # 🔥 Заголовок
     active_count = len(active_tasks)
     completed_count = len(completed_tasks)
     
     if filter_type == "all":
         text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
     else:
-        text = f"📋 {title}\n📊 Активных по фильтру: {active_count}\n📄 Страница {current_page} из {total_pages}\n\n"
+        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
     
+    # 🔥 Формируем кнопки задач
     kb = []
     
     for t in page_tasks:
-        # Иконка статуса + приоритета
+        # Иконка
         if t.is_done:
             icon = "✅"
         else:
-            priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
-            icon = priority_icon
+            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         
-        # Полный текст задачи
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         
-        # Формируем кнопку
         kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
-    # 🔥 Навигация
+    # 🔥 Навигация (НОВАЯ ЛОГИКА)
     nav = []
-    if page_offset > 0: 
+    
+    # Всегда показываем "Назад" если НЕ на первой странице
+    if page_offset > 0:
         nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total: 
+    
+    # Всегда показываем "Вперед" если НЕ на последней странице
+    if page_offset + ITEMS_PER_PAGE < total:
         nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
-    if nav: 
+    
+    if nav:
         kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
+    # 🔥 Отправляем или редактируем
     try:
-        if is_edit: 
+        if is_edit:
             await message.edit_text(text, reply_markup=markup)
-        else: 
+        else:
             await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
-        logger.error(f"❌ Edit failed: {e}")
-        try:
-            await message.answer(text, reply_markup=markup)
-        except:
-            pass
+        if "message is not modified" not in str(e):
+            logger.error(f"❌ Edit failed: {e}")
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
 
