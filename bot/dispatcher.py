@@ -213,19 +213,34 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # Отправляем или редактируем
+    # 🔥 ОТПРАВЛЯЕМ ИЛИ РЕДАКТИРУЕМ (С ИГНОРИРОВАНИЕМ ОШИБКИ)
     try:
         if is_edit:
             await message.edit_text(text, reply_markup=markup)
         else:
             await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            logger.debug("Message not modified, ignoring")
+        error_msg = str(e)
+        if "message is not modified" in error_msg:
+            # 🔥 ИГНОРИРУЕМ эту ошибку - сообщение не изменилось, это нормально
+            pass
+        elif "message to edit not found" in error_msg:
+            # Если сообщение не найдено - отправляем новое
+            await message.answer(text, reply_markup=markup)
         else:
             logger.error(f"❌ Edit failed: {e}")
+            # Пробуем отправить новое сообщение
+            try:
+                await message.answer(text, reply_markup=markup)
+            except:
+                pass
     except Exception as e:
-        logger.error(f"❌ Unexpected error: {e}")
+        logger.error(f"❌ Unexpected error in show_task_list: {e}")
+        # Пробуем отправить новое сообщение
+        try:
+            await message.answer(text, reply_markup=markup)
+        except:
+            pass
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
@@ -446,46 +461,6 @@ async def admin_cleanup(message: types.Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 # ================= КОЛБЭККИ =================
-@dp.callback_query(lambda c: c.data == "refresh")
-async def refresh_list(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        ctx["ai_mode"] = False
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "page_next")
-async def page_next(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
-        ctx["offset"] = new_offset
-        await show_task_list(
-            callback.message, 
-            ctx["title"], 
-            ctx["type"], 
-            ctx["val"], 
-            is_edit=True, 
-            page_offset=new_offset
-        )
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "page_prev")
-async def page_prev(callback):
-    ctx = user_context.get(callback.from_user.id)
-    if ctx:
-        new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
-        ctx["offset"] = new_offset
-        await show_task_list(
-            callback.message, 
-            ctx["title"], 
-            ctx["type"], 
-            ctx["val"], 
-            is_edit=True, 
-            page_offset=new_offset
-        )
-    await callback.answer()
-
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
 async def handle_task_click(callback):
     try:
@@ -501,22 +476,28 @@ async def handle_task_click(callback):
             await callback.answer("❌ Это не твоя задача!", show_alert=True)
             return
         
+        # Меняем статус
         await task_service.update_task(tid, is_done=not task.is_done)
         await callback.answer()
         
+        # Получаем контекст
         ctx = user_context.get(uid, {})
         current_offset = ctx.get("offset", 0)
         
-        if ctx.get("title"):
-            await show_task_list(
-                callback.message,
-                ctx.get("title", "Все задачи"),
-                ctx.get("type", "all"),
-                ctx.get("val"),
-                is_edit=True,
-                page_offset=current_offset
-            )
-        else:
+        # 🔥 ВСЕГДА показываем список
+        await show_task_list(
+            callback.message,
+            ctx.get("title", "Все задачи"),
+            ctx.get("type", "all"),
+            ctx.get("val"),
+            is_edit=True,
+            page_offset=current_offset
+        )
+            
+    except Exception as e:
+        logger.error(f"❌ handle_task_click error: {e}")
+        # 🔥 При любой ошибке показываем все задачи
+        try:
             await show_task_list(
                 callback.message,
                 "Все задачи",
@@ -525,7 +506,6 @@ async def handle_task_click(callback):
                 is_edit=True,
                 page_offset=0
             )
-            
-    except Exception as e:
-        logger.error(f"❌ handle_task_click error: {e}")
+        except:
+            pass
         await callback.answer("⚠️ Ошибка", show_alert=True)
