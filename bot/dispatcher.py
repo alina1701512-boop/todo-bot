@@ -482,21 +482,20 @@ async def handle_task_click(callback):
         
         # Получаем контекст
         ctx = user_context.get(uid, {})
-        current_offset = ctx.get("offset", 0)
         
-        # 🔥 ВСЕГДА показываем список
+        # 🔥 ВСЕГДА сбрасываем на первую страницу при отметке задачи
+        # Это гарантирует, что список не пропадёт
         await show_task_list(
             callback.message,
             ctx.get("title", "Все задачи"),
             ctx.get("type", "all"),
             ctx.get("val"),
             is_edit=True,
-            page_offset=current_offset
+            page_offset=0  # 🔥 Сбрасываем на первую страницу
         )
             
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
-        # 🔥 При любой ошибке показываем все задачи
         try:
             await show_task_list(
                 callback.message,
