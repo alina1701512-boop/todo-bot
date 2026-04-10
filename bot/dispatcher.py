@@ -479,27 +479,28 @@ async def handle_task_click(callback):
         uid = callback.from_user.id
         tid = int(callback.data.split("_")[1])
         
+        # Получаем задачу
         task = await task_service.get_task_by_id(tid)
         if not task:
             await callback.answer("❌ Задача не найдена", show_alert=True)
             return
-            
-        # 🔥 Проверка: задача принадлежит пользователю
-        if task.user_id is None or str(task.user_id) != str(uid):
+        
+        # Проверяем принадлежность пользователю
+        if task.user_id is not None and str(task.user_id) != str(uid):
             await callback.answer("❌ Это не твоя задача!", show_alert=True)
             return
         
-        # 🔥 Отмечаем задачу
+        # Отмечаем задачу (меняем статус)
         new_status = not task.is_done
         await task_service.update_task(tid, is_done=new_status)
         
-        # 🔥 Получаем актуальный контекст
+        # 🔥 ВАЖНО: НЕ показываем уведомление, просто подтверждаем callback
+        await callback.answer()
+        
+        # Получаем контекст пользователя
         ctx = user_context.get(uid, {})
         
-        # 🔥 ВАЖНО: Сохраняем ТЕКУЩИЙ offset из контекста
-        current_offset = ctx.get("offset", 0)
-        
-        # 🔥 Показываем список с ТЕМ ЖЕ offset'ом
+        # 🔥 Обновляем список с ТЕМ ЖЕ offset'ом
         if ctx.get("title"):
             await show_task_list(
                 callback.message,
@@ -507,10 +508,10 @@ async def handle_task_click(callback):
                 ctx.get("type", "all"),
                 ctx.get("val"),
                 is_edit=True,
-                page_offset=current_offset  # 🔥 КЛЮЧЕВОЙ МОМЕНТ!
+                page_offset=ctx.get("offset", 0)
             )
         else:
-            # Если контекст потерян - показываем все задачи с начала
+            # Если контекст потерян - показываем все задачи
             await show_task_list(
                 callback.message,
                 "Все задачи",
@@ -519,11 +520,7 @@ async def handle_task_click(callback):
                 is_edit=True,
                 page_offset=0
             )
-        
-        # 🔥 Уведомление о статусе
-        status_text = "✅ Выполнено" if new_status else "🔄 В работе"
-        await callback.answer(status_text, show_alert=False)
-        
+            
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
         await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
