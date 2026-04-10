@@ -126,23 +126,41 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             all_t = await task_service.get_all_tasks(user_id=uid_str)
             end = now.date() + timedelta(days=30)
             all_tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
-        else: all_tasks = []
-    else: all_tasks = []
+        else: 
+            all_tasks = []
+    else: 
+        all_tasks = []
 
+    # 🔥 ВАЖНО: СОРТИРУЕМ ВСЕ ЗАДАЧИ (не только "all")
+    all_tasks = sort_tasks_by_priority_and_time(all_tasks)
+    
     total = len(all_tasks)
-    if page_offset >= total and total > 0: page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
-    if page_offset < 0: page_offset = 0
+    
+    # 🔥 Исправление: корректируем page_offset, если он выходит за границы
+    if page_offset >= total and total > 0:
+        page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
+    if page_offset < 0:
+        page_offset = 0
 
+    # 🔥 СОХРАНЯЕМ КОНТЕКСТ (всегда актуальный offset)
     user_context.setdefault(user_id, {})
-    user_context[user_id].update({"title": title, "type": filter_type, "val": filter_val, "offset": page_offset})
+    user_context[user_id].update({
+        "title": title, 
+        "type": filter_type, 
+        "val": filter_val, 
+        "offset": page_offset
+    })
 
     if total == 0:
         text = "📋 Задач нет"
-        kb = [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]
+        kb = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]]
         try:
-            if is_edit: await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-            else: await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[kb]))
-        except: pass
+            if is_edit: 
+                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            else: 
+                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        except Exception as e:
+            logger.error(f"❌ Failed to show empty list: {e}")
         return
 
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -151,24 +169,34 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
 
     text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
     kb = []
+    
     for t in page_tasks:
         icon = "✅" if t.is_done else {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
         short = (t.title[:30] + "...") if len(t.title) > 30 else t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
-        kb.append([InlineKeyboardButton(text=f"{icon} {short}\n🕐 {due}", callback_data=cb)])
+        text += f"{icon} {short}\n   🕐 {due}\n\n"
+        kb.append([InlineKeyboardButton(text=f"{icon} {short}", callback_data=cb)])
 
+    # 🔥 Навигация (только если больше 1 страницы)
     nav = []
-    if page_offset > 0: nav.append(InlineKeyboardButton(text="⬅️", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total: nav.append(InlineKeyboardButton(text="➡️", callback_data="page_next"))
-    if nav: kb.append(nav)
+    if page_offset > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
+    if page_offset + ITEMS_PER_PAGE < total:
+        nav.append(InlineKeyboardButton(text="➡️ Вперед", callback_data="page_next"))
+    if nav:
+        kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    
     try:
-        if is_edit: await message.edit_text(text, reply_markup=markup)
-        else: await message.answer(text, reply_markup=markup)
+        if is_edit:
+            await message.edit_text(text, reply_markup=markup)
+        else:
+            await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
-        logger.error(f"❌ Edit failed: {e}")
+        if "message is not modified" not in str(e):
+            logger.error(f"❌ Edit failed: {e}")
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
