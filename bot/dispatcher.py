@@ -430,8 +430,15 @@ async def page_next(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
-        ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+        ctx["offset"] = new_offset  # 🔥 Обновляем контекст сразу
+        await show_task_list(
+            callback.message, 
+            ctx["title"], 
+            ctx["type"], 
+            ctx["val"], 
+            is_edit=True, 
+            page_offset=new_offset
+        )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "page_prev")
@@ -439,8 +446,15 @@ async def page_prev(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
-        ctx["offset"] = new_offset
-        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+        ctx["offset"] = new_offset  # 🔥 Обновляем контекст сразу
+        await show_task_list(
+            callback.message, 
+            ctx["title"], 
+            ctx["type"], 
+            ctx["val"], 
+            is_edit=True, 
+            page_offset=new_offset
+        )
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
