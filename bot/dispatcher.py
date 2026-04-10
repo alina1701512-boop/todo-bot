@@ -104,11 +104,10 @@ def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
-# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
     
-    # 🔥 Получаем задачи
+    # Получаем задачи
     if filter_type == "all": 
         all_tasks = await task_service.get_all_tasks()
     elif filter_type == "priority":
@@ -131,31 +130,31 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: 
         all_tasks = []
     
-    # 🔥 Фильтруем по пользователю
+    # Фильтруем по пользователю
     uid_str = str(user_id)
     all_tasks = [t for t in all_tasks if t.user_id is None or str(t.user_id) == uid_str]
     
-    # 🔥 Разделяем на активные и выполненные
+    # Разделяем на активные и выполненные
     active_tasks = [t for t in all_tasks if not t.is_done]
     completed_tasks = [t for t in all_tasks if t.is_done]
     
-    # 🔥 Сортируем активные по приоритету и дате
+    # Сортируем активные по приоритету и дате
     sorted_active = sort_tasks_by_priority_and_time(active_tasks)
     
-    # 🔥 Выполненные показываем в конце (пока без сортировки)
+    # Выполненные показываем в конце
     sorted_completed = completed_tasks
     
-    # 🔥 Объединяем: сначала активные, потом выполненные
+    # Объединяем: сначала активные, потом выполненные
     all_tasks = sorted_active + sorted_completed
     total = len(all_tasks)
     
-    # 🔥 Корректируем offset если выходит за границы
+    # Корректируем offset если выходит за границы
     if page_offset >= total and total > 0: 
         page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
     if page_offset < 0: 
         page_offset = 0
     
-    # 🔥 Сохраняем контекст
+    # Сохраняем контекст
     user_context.setdefault(user_id, {})
     user_context[user_id].update({
         "title": title, 
@@ -164,7 +163,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         "offset": page_offset
     })
 
-    # 🔥 Если задач нет
+    # Если задач нет
     if total == 0:
         text = "📋 Задач нет"
         kb = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]]
@@ -177,21 +176,17 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             logger.error(f"❌ Show empty list error: {e}")
         return
 
-    # 🔥 Считаем страницы
+    # Считаем страницы
     total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
     page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
-    # 🔥 Заголовок
+    # Заголовок
     active_count = len(active_tasks)
     completed_count = len(completed_tasks)
+    text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
     
-    if filter_type == "all":
-        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
-    else:
-        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
-    
-    # 🔥 Формируем кнопки задач
+    # Формируем кнопки задач
     kb = []
     
     for t in page_tasks:
@@ -207,38 +202,28 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         
         kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
-    # 🔥 Навигация (НОВАЯ ЛОГИКА)
+    # Навигация
     nav = []
-    
-    # Всегда показываем "Назад" если НЕ на первой странице
     if page_offset > 0:
         nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
-    
-    # Всегда показываем "Вперед" если НЕ на последней странице
     if page_offset + ITEMS_PER_PAGE < total:
         nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
-    
     if nav:
         kb.append(nav)
 
     markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # 🔥 Отправляем или редактируем
+    # Отправляем или редактируем
     try:
         if is_edit:
             await message.edit_text(text, reply_markup=markup)
         else:
             await message.answer(text, reply_markup=markup)
-        except TelegramBadRequest as e:
-        # 🔥 Игнорируем ошибку "message is not modified" - это нормально
+    except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             logger.debug("Message not modified, ignoring")
         else:
             logger.error(f"❌ Edit failed: {e}")
-            try:
-                await message.answer(text, reply_markup=markup)
-            except:
-                pass
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
 
@@ -507,28 +492,21 @@ async def handle_task_click(callback):
         uid = callback.from_user.id
         tid = int(callback.data.split("_")[1])
         
-        # Получаем задачу
         task = await task_service.get_task_by_id(tid)
         if not task:
             await callback.answer("❌ Задача не найдена", show_alert=True)
             return
         
-        # Проверяем принадлежность пользователю
         if task.user_id is not None and str(task.user_id) != str(uid):
             await callback.answer("❌ Это не твоя задача!", show_alert=True)
             return
         
-        # Меняем статус
         await task_service.update_task(tid, is_done=not task.is_done)
-        
-        # НЕ показываем уведомление
         await callback.answer()
         
-        # Получаем контекст
         ctx = user_context.get(uid, {})
         current_offset = ctx.get("offset", 0)
         
-        # 🔥 Обновляем список
         if ctx.get("title"):
             await show_task_list(
                 callback.message,
