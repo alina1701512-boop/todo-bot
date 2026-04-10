@@ -511,17 +511,17 @@ async def handle_task_click(callback):
             await callback.answer("❌ Это не твоя задача!", show_alert=True)
             return
         
-        # Отмечаем задачу (меняем статус)
-        new_status = not task.is_done
-        await task_service.update_task(tid, is_done=new_status)
+        # Меняем статус
+        await task_service.update_task(tid, is_done=not task.is_done)
         
-        # 🔥 ВАЖНО: НЕ показываем уведомление
+        # НЕ показываем уведомление
         await callback.answer()
         
-        # Получаем контекст пользователя
+        # Получаем контекст
         ctx = user_context.get(uid, {})
+        current_offset = ctx.get("offset", 0)
         
-        # 🔥 Обновляем список с ТЕМ ЖЕ offset'ом
+        # 🔥 Обновляем список
         if ctx.get("title"):
             await show_task_list(
                 callback.message,
@@ -529,10 +529,9 @@ async def handle_task_click(callback):
                 ctx.get("type", "all"),
                 ctx.get("val"),
                 is_edit=True,
-                page_offset=ctx.get("offset", 0)
+                page_offset=current_offset
             )
         else:
-            # Если контекст потерян - показываем все задачи
             await show_task_list(
                 callback.message,
                 "Все задачи",
@@ -544,4 +543,4 @@ async def handle_task_click(callback):
             
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
-        await callback.answer("⚠️ Ошибка при обновлении", show_alert=True)
+        await callback.answer("⚠️ Ошибка", show_alert=True)
