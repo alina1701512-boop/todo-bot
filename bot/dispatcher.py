@@ -104,7 +104,6 @@ def sort_tasks_by_priority_and_time(tasks):
     return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
-# ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
     
@@ -131,12 +130,30 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     else: 
         all_tasks = []
     
-    # 🔥 ФИЛЬТРУЕМ ПО ПОЛЬЗОВАТЕЛЮ ЗДЕСЬ (вместо передачи в БД)
+    # 🔥 ФИЛЬТРУЕМ ПО ПОЛЬЗОВАТЕЛЮ
     uid_str = str(user_id)
     all_tasks = [t for t in all_tasks if t.user_id is None or str(t.user_id) == uid_str]
     
-    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
-    all_tasks = sort_tasks_by_priority_and_time(all_tasks)
+    # 🔥 НОВОЕ: РАЗДЕЛЯЕМ НА АКТИВНЫЕ И ВЫПОЛНЕННЫЕ
+    active_tasks = [t for t in all_tasks if not t.is_done]
+    completed_tasks = [t for t in all_tasks if t.is_done]
+    
+    # 🔥 НОВОЕ: ФИЛЬТР ПРИМЕНЯЕМ ТОЛЬКО К АКТИВНЫМ ЗАДАЧАМ
+    if filter_type != "all":
+        # Оставляем только активные задачи, соответствующие фильтру
+        filtered_active = active_tasks
+        # Выполненные задачи НЕ фильтруем - они ВСЕГДА показываются в конце
+    else:
+        filtered_active = active_tasks
+    
+    # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ ТОЛЬКО К АКТИВНЫМ ЗАДАЧАМ
+    sorted_active = sort_tasks_by_priority_and_time(filtered_active)
+    
+    # 🔥 ВЫПОЛНЕННЫЕ ЗАДАЧИ СОРТИРУЕМ ПО ID (последние выполненные в конце)
+    sorted_completed = sorted(completed_tasks, key=lambda t: t.id, reverse=True)
+    
+    # 🔥 ОБЪЕДИНЯЕМ: сначала активные, потом выполненные
+    all_tasks = sorted_active + sorted_completed
     total = len(all_tasks)
     
     # 🔥 Корректируем offset если выходит за границы
@@ -170,7 +187,15 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     current_page = (page_offset // ITEMS_PER_PAGE) + 1
     page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
-    text = f"📋 {title} (всего {total})\n📄 Страница {current_page} из {total_pages}\n\n"
+    # 🔥 НОВОЕ: Показываем количество активных и выполненных
+    active_count = len(active_tasks)
+    completed_count = len(completed_tasks)
+    
+    if filter_type == "all":
+        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
+    else:
+        text = f"📋 {title}\n📊 Активных по фильтру: {active_count}\n📄 Страница {current_page} из {total_pages}\n\n"
+    
     kb = []
     
     for t in page_tasks:
@@ -181,7 +206,7 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
             icon = priority_icon
         
-        # Полный текст задачи (не обрезаем)
+        # Полный текст задачи
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
@@ -446,7 +471,7 @@ async def page_next(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
-        ctx["offset"] = new_offset  # 🔥 Обновляем контекст сразу
+        ctx["offset"] = new_offset
         await show_task_list(
             callback.message, 
             ctx["title"], 
@@ -462,7 +487,7 @@ async def page_prev(callback):
     ctx = user_context.get(callback.from_user.id)
     if ctx:
         new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
-        ctx["offset"] = new_offset  # 🔥 Обновляем контекст сразу
+        ctx["offset"] = new_offset
         await show_task_list(
             callback.message, 
             ctx["title"], 
@@ -494,7 +519,7 @@ async def handle_task_click(callback):
         new_status = not task.is_done
         await task_service.update_task(tid, is_done=new_status)
         
-        # 🔥 ВАЖНО: НЕ показываем уведомление, просто подтверждаем callback
+        # 🔥 ВАЖНО: НЕ показываем уведомление
         await callback.answer()
         
         # Получаем контекст пользователя
