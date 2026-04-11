@@ -462,15 +462,21 @@ async def handle_task_click(callback):
         # Получаем контекст
         ctx = user_context.get(uid, {})
         
-        # 🔥 ВСЕГДА сбрасываем на первую страницу при отметке задачи
-        # Это гарантирует, что список не пропадёт
+        # 🔥 ВАЖНО: Если контекст пустой, используем "Все задачи"
+        title = ctx.get("title", "📋 Все задачи")
+        filter_type = ctx.get("type", "all")
+        filter_val = ctx.get("val")
+        
+        # 🔥 ЛОГИРУЕМ для отладки
+        logger.info(f"🔄 handle_task_click: title={title}, type={filter_type}, val={filter_val}")
+        
         await show_task_list(
             callback.message,
-            ctx.get("title", "Все задачи"),
-            ctx.get("type", "all"),
-            ctx.get("val"),
+            title,
+            filter_type,
+            filter_val,
             is_edit=True,
-            page_offset=0  # 🔥 Сбрасываем на первую страницу
+            page_offset=0  # Сбрасываем на первую страницу
         )
             
     except Exception as e:
@@ -478,7 +484,7 @@ async def handle_task_click(callback):
         try:
             await show_task_list(
                 callback.message,
-                "Все задачи",
+                "📋 Все задачи",
                 "all",
                 None,
                 is_edit=True,
