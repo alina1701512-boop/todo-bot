@@ -9,18 +9,23 @@ logger = logging.getLogger(__name__)
 
 # ================= СОЗДАНИЕ =================
 async def create_task(title: str, due_at, priority: str = "none", repeat_rule: str = "none", user_id: str = None) -> Task:
-    async with async_session() as session:
-        task = Task(
-            title=title, 
-            due_at=due_at, 
-            priority=priority, 
-            repeat_rule=repeat_rule,
-            created_at=datetime.utcnow(),
-            user_id=str(user_id) if user_id else None
-        )
-        session.add(task)
-        await session.commit()
-        await session.refresh(task)
+    try:
+        async with async_session() as session:
+            task = Task(
+                title=title, 
+                due_at=due_at, 
+                priority=priority, 
+                repeat_rule=repeat_rule,
+                created_at=datetime.utcnow(),
+                user_id=str(user_id) if user_id else None
+            )
+            session.add(task)
+            await session.commit()
+            await session.refresh(task)
+            return task
+    except Exception as e:
+        logger.error(f"❌ DB error in create_task: {e}")
+        raise
         
         # Авто-синхронизация с Google Calendar
         if user_id:
