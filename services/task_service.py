@@ -161,12 +161,10 @@ async def get_task_stats(user_id: str = None) -> dict:
 async def send_reminders(bot):
     # Напоминания временно отключены
     pass
-
 # ================= АРХИВАЦИЯ ВЫПОЛНЕННЫХ ЗАДАЧ =================
 async def archive_old_completed_tasks() -> int:
     """
     Архивирует все выполненные задачи.
-    Задача считается выполненной, если is_done = True.
     Возвращает количество заархивированных задач.
     """
     from datetime import datetime
@@ -185,6 +183,9 @@ async def archive_old_completed_tasks() -> int:
         
         result = await session.execute(stmt)
         await session.commit()
+        
+        archived_count = result.rowcount
+        return archived_count
         
         archived_count = result.rowcount
         return archived_count
