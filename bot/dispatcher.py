@@ -142,8 +142,9 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
             tasks = []
-    else: 
-        tasks = []
+    
+    # 🔥 Фильтруем архивированные задачи (они не показываются)
+    tasks = [t for t in tasks if not t.is_archived]
     
     # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
     all_tasks = sort_tasks_by_priority_and_time(tasks)
