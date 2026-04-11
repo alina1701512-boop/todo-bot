@@ -17,7 +17,7 @@ tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
-ITEMS_PER_PAGE = 10  # 🔥 ИЗМЕНЕНО: 10 задач на странице
+ITEMS_PER_PAGE = 8  # 🔥 ИЗМЕНЕНО: 10 задач на странице
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu_keyboard():
