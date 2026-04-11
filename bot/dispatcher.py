@@ -141,14 +141,14 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     # Сортируем активные по приоритету и дате
     sorted_active = sort_tasks_by_priority_and_time(active_tasks)
     
-    # Выполненные показываем в конце
+    # Выполненные показываем в конце (без сортировки)
     sorted_completed = completed_tasks
     
     # Объединяем: сначала активные, потом выполненные
     all_tasks = sorted_active + sorted_completed
     total = len(all_tasks)
     
-    # Корректируем offset если выходит за границы
+    # Корректируем offset
     if page_offset >= total and total > 0: 
         page_offset = ((total - 1) // ITEMS_PER_PAGE) * ITEMS_PER_PAGE
     if page_offset < 0: 
@@ -163,79 +163,57 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         "offset": page_offset
     })
 
-    # Если задач нет
+    # 🔥 ВАЖНО: Если ВСЕГО задач нет (total == 0)
     if total == 0:
         text = "📋 Задач нет"
         kb = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]]
-        try:
-            if is_edit: 
-                await message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-            else: 
-                await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-        except Exception as e:
-            logger.error(f"❌ Show empty list error: {e}")
-        return
+        markup = InlineKeyboardMarkup(inline_keyboard=kb)
+    else:
+        # Считаем страницы
+        total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+        current_page = (page_offset // ITEMS_PER_PAGE) + 1
+        page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
-    # Считаем страницы
-    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
-    current_page = (page_offset // ITEMS_PER_PAGE) + 1
-    page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
-
-    # Заголовок
-    active_count = len(active_tasks)
-    completed_count = len(completed_tasks)
-    text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
-    
-    # Формируем кнопки задач
-    kb = []
-    
-    for t in page_tasks:
-        # Иконка
-        if t.is_done:
-            icon = "✅"
-        else:
-            icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+        # Заголовок
+        active_count = len(active_tasks)
+        completed_count = len(completed_tasks)
+        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
         
-        task_text = t.title
-        due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
-        cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
+        # Формируем кнопки задач
+        kb = []
         
-        kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
+        for t in page_tasks:
+            # Иконка
+            if t.is_done:
+                icon = "✅"
+            else:
+                icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
+            
+            task_text = t.title
+            due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
+            cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
+            
+            kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
+        
+        # Навигация
+        nav = []
+        if page_offset > 0:
+            nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
+        if page_offset + ITEMS_PER_PAGE < total:
+            nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
+        if nav:
+            kb.append(nav)
+        
+        markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # Навигация
-    nav = []
-    if page_offset > 0:
-        nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
-    if page_offset + ITEMS_PER_PAGE < total:
-        nav.append(InlineKeyboardButton(text="Вперед ➡️", callback_data="page_next"))
-    if nav:
-        kb.append(nav)
-
-    markup = InlineKeyboardMarkup(inline_keyboard=kb)
-    
-    # 🔥 ОТПРАВЛЯЕМ ИЛИ РЕДАКТИРУЕМ (С ИГНОРИРОВАНИЕМ ОШИБКИ)
+    # 🔥 Отправляем или редактируем
     try:
         if is_edit:
             await message.edit_text(text, reply_markup=markup)
         else:
             await message.answer(text, reply_markup=markup)
-    except TelegramBadRequest as e:
-        error_msg = str(e)
-        if "message is not modified" in error_msg:
-            # 🔥 ИГНОРИРУЕМ эту ошибку - сообщение не изменилось, это нормально
-            pass
-        elif "message to edit not found" in error_msg:
-            # Если сообщение не найдено - отправляем новое
-            await message.answer(text, reply_markup=markup)
-        else:
-            logger.error(f"❌ Edit failed: {e}")
-            # Пробуем отправить новое сообщение
-            try:
-                await message.answer(text, reply_markup=markup)
-            except:
-                pass
     except Exception as e:
-        logger.error(f"❌ Unexpected error in show_task_list: {e}")
+        logger.error(f"❌ Error in show_task_list: {e}")
         # Пробуем отправить новое сообщение
         try:
             await message.answer(text, reply_markup=markup)
