@@ -9,6 +9,7 @@ from services.task_service import archive_old_completed_tasks
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from config import TZ
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,15 @@ async def archive_tasks_job():
     except Exception as e:
         logger.error(f"❌ Ошибка архивации: {e}")
 
+async def self_ping():
+    """Само-пинг для предотвращения засыпания на Render"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{APP_HOST}/health", timeout=10.0)
+            logger.debug(f"💓 Self-ping: {response.status_code}")
+    except Exception as e:
+        logger.debug(f"💤 Self-ping failed: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -40,17 +50,26 @@ async def lifespan(app: FastAPI):
     await bot.set_webhook(webhook_url)
     logger.info(f"🤖 Telegram webhook set to {webhook_url}")
     
-    # 🔥 ЗАПУСКАЕМ ПЛАНИРОВЩИК АРХИВАЦИИ
+    # 🔥 ПЛАНИРОВЩИК АРХИВАЦИИ (каждый день в 00:00)
     scheduler.add_job(
         archive_tasks_job,
         trigger=CronTrigger(hour=0, minute=0, timezone=TZ),
         id="archive_completed_tasks",
         replace_existing=True
     )
-    scheduler.start()
-    logger.info("⏰ Планировщик запущен: архивация выполненных задач каждый день в 00:00 MSK")
     
-    logger.info("⏰ Reminders are DISABLED (temporarily)")
+    # 🔥 САМО-ПИНГ каждые 10 минут (чтобы Render не усыплял)
+    scheduler.add_job(
+        self_ping,
+        trigger=CronTrigger(minute="*/10"),  # каждые 10 минут
+        id="self_ping",
+        replace_existing=True
+    )
+    
+    scheduler.start()
+    logger.info("⏰ Планировщик запущен:")
+    logger.info("   - Архивация выполненных задач: каждый день в 00:00 MSK")
+    logger.info("   - Само-пинг: каждые 10 минут (анти-сон)")
     
     yield
     
@@ -66,6 +85,11 @@ app = FastAPI(lifespan=lifespan)
 async def root():
     return {"status": "ok", "message": "Todo Bot is running"}
 
+@app.get("/health")
+async def health():
+    """Эндпоинт для проверки работоспособности и анти-сна"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     try:
@@ -75,3 +99,6 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         logger.error(f"❌ Webhook error: {e}")
         return JSONResponse(content={"status": "error"}, status_code=500)
+
+# Добавим datetime для health check
+from datetime import datetime
