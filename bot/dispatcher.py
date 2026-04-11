@@ -244,7 +244,8 @@ async def period_menu(message):
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
-    await show_task_list(message, "Все задачи", "all", None, page_offset=0)
+    # 🔥 Используем ТОЧНО такую же логику как в filter_importance
+    await show_task_list(message, "📋 Все задачи", "all", None, page_offset=0)
 
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
 async def filter_importance(message):
