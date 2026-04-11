@@ -161,3 +161,30 @@ async def get_task_stats(user_id: str = None) -> dict:
 async def send_reminders(bot):
     # Напоминания временно отключены
     pass
+
+# ================= АРХИВАЦИЯ ВЫПОЛНЕННЫХ ЗАДАЧ =================
+async def archive_old_completed_tasks() -> int:
+    """
+    Архивирует все выполненные задачи.
+    Задача считается выполненной, если is_done = True.
+    Возвращает количество заархивированных задач.
+    """
+    from datetime import datetime
+    from sqlalchemy import update
+    
+    async with async_session() as session:
+        # Архивируем ВСЕ выполненные задачи, которые ещё не в архиве
+        stmt = (
+            update(Task)
+            .where(
+                Task.is_done == True,
+                Task.is_archived == False
+            )
+            .values(is_archived=True)
+        )
+        
+        result = await session.execute(stmt)
+        await session.commit()
+        
+        archived_count = result.rowcount
+        return archived_count
