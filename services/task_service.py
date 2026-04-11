@@ -40,17 +40,14 @@ async def create_task(title: str, due_at, priority: str = "none", repeat_rule: s
         return task
 
 # ================= ПОЛУЧЕНИЕ =================
-async def get_all_tasks():
-    try:
-        async with async_session() as session:
-            stmt = select(Task).where(Task.is_archived == False)
-            stmt = stmt.order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
-            res = await session.execute(stmt)
-            return res.scalars().all()
-    except Exception as e:
-        logger.error(f"❌ DB error in get_all_tasks: {e}")
-        return []  # Возвращаем пустой список при ошибке
-
+async def get_all_tasks(user_id: str = None):
+    async with async_session() as session:
+        stmt = select(Task).where(Task.is_archived == False)
+        if user_id:
+            stmt = stmt.where(Task.user_id == str(user_id))
+        stmt = stmt.order_by(Task.is_done.asc(), Task.due_at.asc().nullslast())
+        res = await session.execute(stmt)
+        return res.scalars().all()
 async def get_task_by_id(task_id: int):
     async with async_session() as session:
         res = await session.execute(select(Task).where(Task.id == task_id))
