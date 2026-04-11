@@ -17,7 +17,7 @@ tz = ZoneInfo(TZ)
 bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
-ITEMS_PER_PAGE = 8
+ITEMS_PER_PAGE = 10  # 🔥 ИЗМЕНЕНО: 10 задач на странице
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu_keyboard():
@@ -83,23 +83,14 @@ def clean_title(text):
     for w in words: text = text.lower().replace(w, "")
     return text.strip().title()
 
-# ================= ФУНКЦИЯ СОРТИРОВКИ (ИСПРАВЛЕНА) =================
+# ================= ФУНКЦИЯ СОРТИРОВКИ =================
 def get_sort_key(task):
-    """Возвращает ключ для сортировки задачи"""
-    # Приоритет: red(0) -> yellow(1) -> green(2) -> none(3) -> done(4)
     if task.is_done:
         priority_order = 4
     else:
-        priority_order = {
-            "red": 0,
-            "yellow": 1,
-            "green": 2,
-            "none": 3
-        }.get(task.priority, 3)
+        priority_order = {"red": 0, "yellow": 1, "green": 2, "none": 3}.get(task.priority, 3)
     
-    # Время: None ставим в конец (используем datetime.max)
     if task.due_at:
-        # Убеждаемся, что due_at наивный (без часового пояса)
         if hasattr(task.due_at, 'tzinfo') and task.due_at.tzinfo is not None:
             due_time = task.due_at.replace(tzinfo=None)
         else:
@@ -110,40 +101,37 @@ def get_sort_key(task):
     return (priority_order, due_time)
 
 def sort_tasks_by_priority_and_time(tasks):
-    """
-    Сортирует задачи:
-    1. Выполненные - в конец
-    2. Приоритет: red (🔴) -> yellow (🟡) -> green (🟢) -> none (⚪️)
-    3. Внутри каждой группы - по времени (сначала те, у кого due_at раньше)
-    """
     return sorted(tasks, key=get_sort_key)
 
 # ================= ОТРИСОВКА СПИСКА =================
 async def show_task_list(message, title, filter_type, filter_val, is_edit=False, page_offset=0):
     user_id = message.from_user.id
+    uid_str = str(user_id)  # 🔥 ДОБАВЛЕНО
     
-    # Получаем задачи
+    # 🔥 ИЗМЕНЕНО: передаём user_id во все вызовы
     if filter_type == "all": 
-        tasks = await task_service.get_all_tasks()
+        tasks = await task_service.get_all_tasks(user_id=uid_str)
     elif filter_type == "priority":
-        all_t = await task_service.get_all_tasks()
+        all_t = await task_service.get_all_tasks(user_id=uid_str)
         tasks = [t for t in all_t if t.priority == filter_val]
     elif filter_type == "period":
         now = datetime.now(tz)
         if filter_val == "Сегодня": 
-            tasks = await task_service.get_tasks_for_date(now.date())
+            tasks = await task_service.get_tasks_for_date(now.date(), user_id=uid_str)
         elif filter_val == "Завтра": 
-            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1))
+            tasks = await task_service.get_tasks_for_date(now.date() + timedelta(days=1), user_id=uid_str)
         elif filter_val == "📆 Неделя": 
-            tasks = await task_service.get_tasks_for_week(now.date())
+            tasks = await task_service.get_tasks_for_week(now.date(), user_id=uid_str)
         elif filter_val == "🗓️ Месяц":
-            all_t = await task_service.get_all_tasks()
+            all_t = await task_service.get_all_tasks(user_id=uid_str)
             end = now.date() + timedelta(days=30)
             tasks = [t for t in all_t if t.due_at and now.date() <= t.due_at.date() <= end]
         else: 
             tasks = []
+    else: 
+        tasks = []
     
-    # 🔥 Фильтруем архивированные задачи (они не показываются)
+    # 🔥 Фильтруем архивированные задачи
     tasks = [t for t in tasks if not t.is_archived]
     
     # 🔥 ПРИМЕНЯЕМ СОРТИРОВКУ
@@ -183,19 +171,16 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     kb = []
     
     for t in page_tasks:
-        # Иконка статуса + приоритета
         if t.is_done:
             icon = "✅"
         else:
             priority_icon = {"red": "🔴", "yellow": "🟡", "green": "🟢"}.get(t.priority, "⚪️")
             icon = priority_icon
         
-        # Полный текст задачи (не обрезаем)
         task_text = t.title
         due = t.due_at.strftime("%d.%m %H:%M") if t.due_at else "Без срока"
         cb = f"done_{t.id}" if t.is_done else f"task_{t.id}"
         
-        # Формируем кнопку: иконка слева, затем текст, затем дата
         kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
     
     nav = []
@@ -214,11 +199,8 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         else: 
             await message.answer(text, reply_markup=markup)
     except TelegramBadRequest as e:
-        logger.error(f"❌ Edit failed: {e}")
-        try:
-            await message.answer(text, reply_markup=markup)
-        except:
-            pass
+        if "message is not modified" not in str(e):
+            logger.error(f"❌ Edit failed: {e}")
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
 
@@ -305,7 +287,7 @@ async def handle_text(message):
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
 
-# ================= 📊 СТАТИСТИКА /stats =================
+# ================= 📊 СТАТИСТИКА =================
 @dp.message(Command("stats"))
 async def show_stats(message: types.Message):
     uid_str = str(message.from_user.id)
@@ -327,10 +309,9 @@ async def show_stats(message: types.Message):
     
     await message.answer(text, parse_mode="Markdown")
 
-# ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
+# ================= 🎤 ГОЛОСОВЫЕ =================
 @dp.message(lambda m: m.voice)
 async def handle_voice(message: types.Message):
-    """Принимает голосовые сообщения, распознаёт и создаёт задачу."""
     uid = message.from_user.id
     await message.answer("🎧 Слушаю...")
     
@@ -356,20 +337,19 @@ async def handle_voice(message: types.Message):
             )
             await handle_text(fake_message)
         else:
-            await message.answer("❌ Не удалось распознать речь. Попробуйте ещё раз или напишите текстом.")
+            await message.answer("❌ Не удалось распознать речь.")
             
     except Exception as e:
         logger.error(f"❌ Voice handler error: {e}")
-        await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
-        
-# ================= 📅 GOOGLE CALENDAR COMMANDS =================
+        await message.answer("❌ Ошибка при обработке голоса.")
+
+# ================= GOOGLE CALENDAR =================
 @dp.message(Command("connect_google"))
 async def connect_google(message: types.Message):
-    """Начинает процесс подключения к Google Calendar"""
     try:
         from services.google_calendar import get_auth_url
     except ImportError:
-        await message.answer("❌ Модуль Google Calendar не найден. Проверьте установку.")
+        await message.answer("❌ Модуль Google Calendar не найден.")
         return
     
     user_id = message.from_user.id
@@ -378,71 +358,45 @@ async def connect_google(message: types.Message):
     if len(parts) > 1:
         code = parts[1]
         await message.answer("🔄 Проверяю код...")
-        
         from services.google_calendar import save_code
         success = await save_code(user_id, code)
-        
         if success:
-            await message.answer(
-                "✅ **Google Календарь подключен!**\n\n"
-                "📅 Теперь все новые задачи будут автоматически добавляться в твой календарь.\n"
-                "Задачи без даты появятся сегодня в 12:00."
-            )
+            await message.answer("✅ **Google Календарь подключен!**")
         else:
-            await message.answer("❌ Ошибка при проверке кода. Попробуй ещё раз.")
+            await message.answer("❌ Ошибка при проверке кода.")
     else:
         try:
             url = await get_auth_url(user_id)
-            await message.answer(
-                f"📅 **Подключение Google Calendar**\n\n"
-                f"**1.** Перейди по ссылке и разреши доступ:\n{url}\n\n"
-                f"**2.** Скопируй полученный код и отправь его мне:\n"
-                f"`/connect_google ТВОЙ_КОД`\n\n"
-                f"Пример: `/connect_google 4/0Aea...`"
-            )
+            await message.answer(f"📅 Перейди по ссылке:\n{url}\n\nОтправь код: `/connect_google КОД`")
         except Exception as e:
-            logger.error(f"Google auth error: {e}")
-            await message.answer("❌ Ошибка при генерации ссылки. Проверь GOOGLE_CLIENT_ID и GOOGLE_CLIENT_SECRET в Render.")
+            await message.answer("❌ Ошибка.")
 
 @dp.message(Command("disconnect_google"))
 async def disconnect_google(message: types.Message):
-    """Отключает Google Calendar"""
     try:
         from services.google_calendar import disconnect_google as google_disconnect
     except ImportError:
         await message.answer("❌ Модуль не найден.")
         return
-    
     success = await google_disconnect(message.from_user.id)
     if success:
-        await message.answer("🗑️ **Google Calendar отключен**\nТвои задачи больше не будут синхронизироваться.")
+        await message.answer("🗑️ **Google Calendar отключен**")
     else:
-        await message.answer("⚠️ Не удалось отключить. Попробуй ещё раз.")
+        await message.answer("⚠️ Не удалось отключить.")
 
 @dp.message(Command("google_status"))
 async def google_status(message: types.Message):
-    """Проверяет статус подключения к Google Calendar"""
     try:
         from services.google_calendar import _get_creds_from_db
     except ImportError:
         await message.answer("❌ Модуль не найден.")
         return
-    
-    user_id = message.from_user.id
-    creds = await _get_creds_from_db(user_id)
-    
+    creds = await _get_creds_from_db(message.from_user.id)
     if creds:
-        await message.answer(
-            "✅ **Google Calendar подключен**\n\n"
-            "📅 Все новые задачи автоматически добавляются в календарь.\n"
-            "Задачи без даты → сегодня в 12:00"
-        )
+        await message.answer("✅ **Google Calendar подключен**")
     else:
-        await message.answer(
-            "⚪️ **Google Calendar не подключен**\n\n"
-            "Напиши `/connect_google`, чтобы начать синхронизацию."
-        )
-        
+        await message.answer("⚪️ **Не подключен**. /connect_google")
+
 # ================= КОЛБЭККИ =================
 @dp.callback_query(lambda c: c.data == "refresh")
 async def refresh_list(callback):
@@ -477,9 +431,16 @@ async def handle_task_click(callback):
         tid = int(callback.data.split("_")[1])
         
         task = await task_service.get_task_by_id(tid)
-        if task:
-            await task_service.update_task(tid, is_done=not task.is_done)
+        if not task:
+            await callback.answer("❌ Задача не найдена", show_alert=True)
+            return
         
+        # 🔥 ПРОВЕРКА: задача принадлежит пользователю
+        if task.user_id is not None and str(task.user_id) != str(uid):
+            await callback.answer("❌ Это не твоя задача!", show_alert=True)
+            return
+        
+        await task_service.update_task(tid, is_done=not task.is_done)
         await callback.answer("")
         
         ctx = user_context.get(uid, {})
