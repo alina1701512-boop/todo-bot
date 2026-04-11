@@ -138,14 +138,11 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
     active_tasks = [t for t in all_tasks if not t.is_done]
     completed_tasks = [t for t in all_tasks if t.is_done]
     
-    # Сортируем активные по приоритету и дате
+    # Сортируем активные
     sorted_active = sort_tasks_by_priority_and_time(active_tasks)
     
-    # Выполненные показываем в конце (без сортировки)
-    sorted_completed = completed_tasks
-    
-    # Объединяем: сначала активные, потом выполненные
-    all_tasks = sorted_active + sorted_completed
+    # Объединяем
+    all_tasks = sorted_active + completed_tasks
     total = len(all_tasks)
     
     # Корректируем offset
@@ -163,27 +160,21 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         "offset": page_offset
     })
 
-    # 🔥 ВАЖНО: Если ВСЕГО задач нет (total == 0)
     if total == 0:
         text = "📋 Задач нет"
         kb = [[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")]]
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
     else:
-        # Считаем страницы
         total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
         current_page = (page_offset // ITEMS_PER_PAGE) + 1
         page_tasks = all_tasks[page_offset : page_offset + ITEMS_PER_PAGE]
 
-        # Заголовок
         active_count = len(active_tasks)
         completed_count = len(completed_tasks)
-        text = f"📋 {title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
+        text = f"{title}\n📊 Активных: {active_count} | ✅ Выполнено: {completed_count}\n📄 Страница {current_page} из {total_pages}\n\n"
         
-        # Формируем кнопки задач
         kb = []
-        
         for t in page_tasks:
-            # Иконка
             if t.is_done:
                 icon = "✅"
             else:
@@ -195,7 +186,6 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
             
             kb.append([InlineKeyboardButton(text=f"{icon} {task_text} | 🕐 {due}", callback_data=cb)])
         
-        # Навигация
         nav = []
         if page_offset > 0:
             nav.append(InlineKeyboardButton(text="⬅️ Назад", callback_data="page_prev"))
@@ -206,19 +196,16 @@ async def show_task_list(message, title, filter_type, filter_val, is_edit=False,
         
         markup = InlineKeyboardMarkup(inline_keyboard=kb)
     
-    # 🔥 Отправляем или редактируем
     try:
         if is_edit:
             await message.edit_text(text, reply_markup=markup)
         else:
             await message.answer(text, reply_markup=markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            logger.error(f"❌ Edit failed: {e}")
     except Exception as e:
         logger.error(f"❌ Error in show_task_list: {e}")
-        # Пробуем отправить новое сообщение
-        try:
-            await message.answer(text, reply_markup=markup)
-        except:
-            pass
 
 # ================= ОБРАБОТЧИКИ МЕНЮ =================
 @dp.message(Command("start"))
@@ -244,7 +231,6 @@ async def period_menu(message):
 @dp.message(lambda m: m.text == "📋 Все задачи")
 async def all_tasks(message):
     user_context.setdefault(message.from_user.id, {})["ai_mode"] = False
-    # 🔥 Используем ТОЧНО такую же логику как в filter_importance
     await show_task_list(message, "📋 Все задачи", "all", None, page_offset=0)
 
 @dp.message(lambda m: m.text in ["🔴 Срочные", "🟡 Средние", "🟢 Лайтовые"])
@@ -304,142 +290,32 @@ async def handle_text(message):
     if ctx:
         await show_task_list(message, ctx["title"], ctx["type"], ctx["val"], is_edit=False, page_offset=0)
 
-# ================= 📊 СТАТИСТИКА /stats =================
-@dp.message(Command("stats"))
-async def show_stats(message: types.Message):
-    uid_str = str(message.from_user.id)
-    await message.answer("📊 **Готовлю статистику...**")
-    
-    stats = await task_service.get_task_stats(user_id=uid_str)
-    completion = (stats['done'] / stats['total'] * 100) if stats['total'] > 0 else 0
-    
-    text = (f"📊 **Твоя статистика:**\n\n"
-            f"📦 **Всего задач:** {stats['total']}\n"
-            f"✅ **Выполнено:** {stats['done']}\n"
-            f"⏳ **В работе:** {stats['pending']}\n"
-            f"🔴 **Просрочено:** {stats['overdue']}\n\n"
-            f"📈 **Прогресс:** {completion:.1f}%\n\n"
-            f"**По приоритетам:**\n"
-            f"🔴 Срочные: {stats['red']}\n"
-            f"🟡 Средние: {stats['yellow']}\n"
-            f"🟢 Лайтовые: {stats['green']}\n")
-    
-    await message.answer(text, parse_mode="Markdown")
-
-# ================= 🎤 ОБРАБОТЧИК ГОЛОСОВЫХ СООБЩЕНИЙ =================
-@dp.message(lambda m: m.voice)
-async def handle_voice(message: types.Message):
-    uid = message.from_user.id
-    await message.answer("🎧 Слушаю...")
-    
-    try:
-        file = await bot.get_file(message.voice.file_id)
-        file_path = file.file_path
-        
-        async with httpx.AsyncClient() as client:
-            download_url = f"https://api.telegram.org/file/bot{TG_TOKEN}/{file_path}"
-            response = await client.get(download_url, timeout=30.0)
-            audio_bytes = response.content
-        
-        from services.ai_parser import transcribe_voice
-        text = await transcribe_voice(audio_bytes)
-        
-        if text:
-            fake_message = types.Message(
-                message_id=message.message_id,
-                from_user=message.from_user,
-                date=message.date,
-                chat=message.chat,
-                text=text
-            )
-            await handle_text(fake_message)
-        else:
-            await message.answer("❌ Не удалось распознать речь. Попробуйте ещё раз или напишите текстом.")
-            
-    except Exception as e:
-        logger.error(f"❌ Voice handler error: {e}")
-        await message.answer("❌ Ошибка при обработке голоса. Попробуйте позже.")
-        
-# ================= 📅 GOOGLE CALENDAR COMMANDS =================
-@dp.message(Command("connect_google"))
-async def connect_google(message: types.Message):
-    try:
-        from services.google_calendar import get_auth_url
-    except ImportError:
-        await message.answer("❌ Модуль Google Calendar не найден.")
-        return
-    
-    user_id = message.from_user.id
-    parts = message.text.split()
-    
-    if len(parts) > 1:
-        code = parts[1]
-        await message.answer("🔄 Проверяю код...")
-        
-        from services.google_calendar import save_code
-        success = await save_code(user_id, code)
-        
-        if success:
-            await message.answer("✅ **Google Календарь подключен!**\n📅 Все новые задачи будут добавляться в календарь.")
-        else:
-            await message.answer("❌ Ошибка при проверке кода.")
-    else:
-        try:
-            url = await get_auth_url(user_id)
-            await message.answer(f"📅 **Подключение Google Calendar**\n\n1. Перейди: {url}\n2. Скопируй код и отправь: `/connect_google КОД`")
-        except Exception as e:
-            logger.error(f"Google auth error: {e}")
-            await message.answer("❌ Ошибка. Проверь GOOGLE_CLIENT_ID и SECRET в Render.")
-
-@dp.message(Command("disconnect_google"))
-async def disconnect_google(message: types.Message):
-    try:
-        from services.google_calendar import disconnect_google as google_disconnect
-    except ImportError:
-        await message.answer("❌ Модуль не найден.")
-        return
-    
-    success = await google_disconnect(message.from_user.id)
-    if success:
-        await message.answer("🗑️ **Google Calendar отключен**")
-    else:
-        await message.answer("⚠️ Не удалось отключить.")
-
-@dp.message(Command("google_status"))
-async def google_status(message: types.Message):
-    try:
-        from services.google_calendar import _get_creds_from_db
-    except ImportError:
-        await message.answer("❌ Модуль не найден.")
-        return
-    
-    creds = await _get_creds_from_db(message.from_user.id)
-    
-    if creds:
-        await message.answer("✅ **Google Calendar подключен**")
-    else:
-        await message.answer("⚪️ **Не подключен**. Используй /connect_google")
-
-# ================= 🛠️ ВРЕМЕННАЯ КОМАНДА ОЧИСТКИ =================
-@dp.message(Command("admin_cleanup"))
-async def admin_cleanup(message: types.Message):
-    if str(message.from_user.id) != "342298611":
-        await message.answer("❌ Доступ запрещён")
-        return
-    
-    from sqlalchemy import text
-    from database import async_session
-    
-    try:
-        async with async_session() as session:
-            result = await session.execute(text("DELETE FROM tasks WHERE user_id IS NULL"))
-            await session.commit()
-            deleted = result.rowcount
-        await message.answer(f"✅ Удалено старых задач: {deleted}")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
-
 # ================= КОЛБЭККИ =================
+@dp.callback_query(lambda c: c.data == "refresh")
+async def refresh_list(callback):
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=0)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "page_next")
+async def page_next(callback):
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        new_offset = ctx.get("offset", 0) + ITEMS_PER_PAGE
+        ctx["offset"] = new_offset
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "page_prev")
+async def page_prev(callback):
+    ctx = user_context.get(callback.from_user.id)
+    if ctx:
+        new_offset = max(0, ctx.get("offset", 0) - ITEMS_PER_PAGE)
+        ctx["offset"] = new_offset
+        await show_task_list(callback.message, ctx["title"], ctx["type"], ctx["val"], is_edit=True, page_offset=new_offset)
+    await callback.answer()
+
 @dp.callback_query(lambda c: c.data.startswith("task_") or c.data.startswith("done_"))
 async def handle_task_click(callback):
     try:
@@ -455,41 +331,17 @@ async def handle_task_click(callback):
             await callback.answer("❌ Это не твоя задача!", show_alert=True)
             return
         
-        # Меняем статус
         await task_service.update_task(tid, is_done=not task.is_done)
         await callback.answer()
         
-        # Получаем контекст
         ctx = user_context.get(uid, {})
-        
-        # 🔥 ВАЖНО: Если контекст пустой, используем "Все задачи"
         title = ctx.get("title", "📋 Все задачи")
         filter_type = ctx.get("type", "all")
         filter_val = ctx.get("val")
         
-        # 🔥 ЛОГИРУЕМ для отладки
-        logger.info(f"🔄 handle_task_click: title={title}, type={filter_type}, val={filter_val}")
-        
-        await show_task_list(
-            callback.message,
-            title,
-            filter_type,
-            filter_val,
-            is_edit=True,
-            page_offset=0  # Сбрасываем на первую страницу
-        )
+        await show_task_list(callback.message, title, filter_type, filter_val, is_edit=True, page_offset=0)
             
     except Exception as e:
         logger.error(f"❌ handle_task_click error: {e}")
-        try:
-            await show_task_list(
-                callback.message,
-                "📋 Все задачи",
-                "all",
-                None,
-                is_edit=True,
-                page_offset=0
-            )
-        except:
-            pass
+        await show_task_list(callback.message, "📋 Все задачи", "all", None, is_edit=True, page_offset=0)
         await callback.answer("⚠️ Ошибка", show_alert=True)
